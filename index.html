@@ -31,6 +31,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .ai:focus{border-color:var(--accent)}
 .ai::placeholder{color:var(--muted)}
 .auth-btn{width:100%;padding:.85rem;background:linear-gradient(135deg,#5288c1,#7c3aed);border:none;border-radius:12px;font-family:'Inter',sans-serif;font-size:.92rem;font-weight:700;color:#fff;cursor:pointer;transition:filter .15s}
+.auth-btn:disabled{opacity:.6;cursor:default}
 .auth-err{color:var(--red);font-size:.75rem;margin-top:.5rem;min-height:1.1em}
 .auth-sw{margin-top:1rem;font-size:.8rem;color:var(--muted)}
 .auth-sw b{color:var(--accent);cursor:pointer;font-weight:600}
@@ -38,6 +39,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 /* APP */
 #APP{display:none;position:fixed;inset:0;padding-top:var(--safe-t)}
 #APP.show{display:block}
+
+/* CONN BANNER */
+#CONN{position:fixed;top:var(--safe-t);left:0;right:0;z-index:998;background:var(--red);color:#fff;font-size:.72rem;font-weight:600;text-align:center;padding:.35rem;transform:translateY(-100%);transition:transform .25s}
+#CONN.show{transform:translateY(0)}
 
 /* VIEWS */
 #VL{position:absolute;inset:0;background:var(--bg1);display:flex;flex-direction:column;transition:transform .28s cubic-bezier(.4,0,.2,1)}
@@ -91,17 +96,20 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .msgs{flex:1;overflow-y:auto;padding:.8rem .8rem 0;display:flex;flex-direction:column;overscroll-behavior:contain}
 .dsep{text-align:center;margin:.7rem 0}
 .dsep span{background:rgba(0,0,0,.35);color:var(--muted2);font-size:.68rem;font-weight:500;padding:.2rem .65rem;border-radius:10px}
-.mrow{display:flex;gap:.45rem;margin:.1rem 0;align-items:flex-end}
+.mrow{display:flex;gap:.45rem;margin:.1rem 0;align-items:flex-end;animation:msgIn .18s ease}
+@keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .mrow.mine{flex-direction:row-reverse}
 .mav-wrap{width:32px;flex-shrink:0}
 .mav{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.7rem;overflow:hidden}
 .mav img{width:100%;height:100%;object-fit:cover;border-radius:50%}
 .mav.hid{opacity:0}
-.mcont{max-width:76%;display:flex;flex-direction:column}
+.mcont{max-width:min(76%,480px);display:flex;flex-direction:column}
 .msname{font-size:.7rem;font-weight:600;color:var(--accent);margin-bottom:.18rem;padding-left:.2rem}
-.bub{background:var(--bother);border-radius:14px 14px 14px 4px;padding:.55rem .75rem .4rem;cursor:pointer;word-break:break-word;transition:filter .1s}
+.bub{background:var(--bother);border-radius:14px 14px 14px 4px;padding:.55rem .75rem .4rem;cursor:pointer;word-break:break-word;transition:filter .1s,opacity .15s}
 .mrow.mine .bub{background:var(--bme);border-radius:14px 14px 4px 14px}
 .bub:active{filter:brightness(1.15)}
+.bub.pending{opacity:.65}
+.bub.failed{background:var(--redD);outline:1px solid rgba(229,57,53,.4)}
 .brep{background:rgba(255,255,255,.07);border-left:3px solid var(--accent);border-radius:6px;padding:.3rem .6rem;margin-bottom:.5rem;cursor:pointer}
 .brep-name{font-size:.68rem;color:var(--accent);font-weight:600}
 .brep-txt{font-size:.72rem;color:var(--muted2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}
@@ -111,7 +119,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .bfile i{color:var(--accent)}
 .bfile a{color:var(--accent);font-size:.78rem;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px}
 .btxt{font-size:.88rem;line-height:1.5;white-space:pre-wrap}
-.btime{font-size:.6rem;color:rgba(255,255,255,.38);display:flex;justify-content:flex-end;margin-top:.25rem}
+.btime{font-size:.6rem;color:rgba(255,255,255,.38);display:flex;justify-content:flex-end;align-items:center;gap:.25rem;margin-top:.25rem}
+.btime i{font-size:.62rem}
+.btime .retry{color:var(--red);cursor:pointer;font-weight:700;text-decoration:underline}
 .brxns{display:flex;flex-wrap:wrap;gap:.2rem;margin-top:.32rem}
 .rxp{display:inline-flex;align-items:center;gap:.18rem;background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:.15rem .42rem;font-size:.78rem;cursor:pointer;transition:all .12s;user-select:none}
 .rxp:active,.rxp.mine{background:var(--accentD);border-color:var(--accent)}
@@ -119,7 +129,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 /* Upload pending bubble */
 .upend{width:220px;min-height:100px;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:.3rem;background:rgba(255,255,255,.05);position:relative}
-/* SVG circle */
 .ucirc-wrap{position:relative;width:54px;height:54px;flex-shrink:0}
 .ucirc-bg{fill:none;stroke:rgba(255,255,255,.18);stroke-width:4}
 .ucirc-fill{fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-dasharray:138.23;stroke-dashoffset:138.23;transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset .25s linear}
@@ -135,13 +144,18 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .crow{display:flex;align-items:flex-end;gap:.5rem;padding:.55rem .75rem .6rem}
 .abtn{width:40px;height:40px;border-radius:50%;background:none;border:none;color:var(--muted2);cursor:pointer;font-size:1.05rem;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:color .15s}
 .abtn:hover{color:var(--accent)}
+.abtn:disabled{opacity:.4;cursor:default}
 .ibox{flex:1;background:var(--bg2);border-radius:22px;display:flex;align-items:flex-end;padding:.08rem .5rem;border:1px solid transparent;transition:border-color .2s;min-height:44px;position:relative}
 .ibox:focus-within{border-color:rgba(82,136,193,.4)}
 #msgIn{flex:1;background:none;border:none;font-family:'Inter',sans-serif;font-size:.9rem;color:var(--text);outline:none;padding:.6rem .4rem;resize:none;max-height:110px;overflow-y:auto;line-height:1.45}
 #msgIn::placeholder{color:var(--muted)}
+#msgIn:disabled{opacity:.6}
 .etog{width:36px;height:36px;background:none;border:none;cursor:pointer;font-size:1.15rem;display:flex;align-items:center;justify-content:center;padding-bottom:.52rem;align-self:flex-end}
-.sbtn{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#5288c1,#7c3aed);border:none;color:#fff;cursor:pointer;font-size:.9rem;flex-shrink:0;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(82,136,193,.4);transition:transform .1s}
+.sbtn{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#5288c1,#7c3aed);border:none;color:#fff;cursor:pointer;font-size:.9rem;flex-shrink:0;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(82,136,193,.4);transition:transform .1s,opacity .15s}
 .sbtn:active{transform:scale(.9)}
+.sbtn:disabled{opacity:.55;cursor:default;transform:none}
+.sbtn .fa-spinner{animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 /* EMOJI PICKER */
 .epick{position:absolute;bottom:calc(100% + 8px);right:4px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:.55rem;display:flex;flex-wrap:wrap;gap:.28rem;max-width:250px;box-shadow:0 8px 32px rgba(0,0,0,.6);z-index:200;opacity:0;visibility:hidden;transform:translateY(8px);transition:all .15s}
@@ -204,6 +218,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </head>
 <body>
 
+<div id="CONN">Connection lost — retrying…</div>
+
 <div id="AUTH">
   <div class="auth-card">
     <div class="auth-icon">💬</div>
@@ -258,7 +274,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <button class="ib" style="width:28px;height:28px;font-size:.7rem" onclick="clearReply()"><i class="fas fa-times"></i></button>
       </div>
       <div class="crow">
-        <button class="abtn" onclick="g('fin').click()"><i class="fas fa-paperclip"></i></button>
+        <button class="abtn" id="attachBtn" onclick="g('fin').click()"><i class="fas fa-paperclip"></i></button>
         <input type="file" id="fin" style="display:none" accept="image/*,video/*,.pdf,.doc,.docx,.zip" onchange="onFile(this)">
         <div class="ibox">
           <textarea id="msgIn" placeholder="Message…" rows="1"></textarea>
@@ -272,7 +288,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
             <span class="ee" onclick="addE('✅')">✅</span><span class="ee" onclick="addE('💯')">💯</span>
           </div>
         </div>
-        <button class="sbtn" onclick="sendMsg()"><i class="fas fa-paper-plane"></i></button>
+        <button class="sbtn" id="sendBtn" onclick="sendMsg()"><i class="fas fa-paper-plane"></i></button>
       </div>
     </div>
   </div>
@@ -355,13 +371,20 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 <script>
 'use strict';
-var BACKEND='https://marya-hosting.pages.dev';
+/* ── BACKEND ──────────────────────────────────────────────────────────
+   Same-origin by default: index.html + /functions/btfstorage/*.js live
+   in ONE Cloudflare Pages project/repo, so requests just hit relative
+   paths on the same domain — no CORS hop, no extra DNS/TLS round trip.
+   If you ever split frontend/backend across two different domains again,
+   set BACKEND to that full https:// URL instead of ''.
+*/
+var BACKEND='';
 var CHAT_API=BACKEND+'/btfstorage/chat';
-var UPLOAD_API=BACKEND+'/upload';
+var UPLOAD_API=BACKEND+'/btfstorage/upload';   // FIX: was '/upload' — wrong route, uploads/avatars were 404ing
 var TOKEN=localStorage.getItem('ng_tok')||'';
 var ME=null,curTab='chats',curChat=null;
 var CC=[],CH=[];
-var pollT=null,replyD=null,ctxD=null,pendAv=null;
+var pollT=null,replyD=null,ctxD=null,pendAv=null,sending=false;
 var AVC=['#5288c1','#7c3aed','#e11d48','#0891b2','#059669','#d97706','#9333ea','#0284c7'];
 function g(id){return document.getElementById(id);}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -383,18 +406,32 @@ function toast(msg,type){
   var el=document.createElement('div');el.className='toast '+(type||'info');el.textContent=msg;
   g('TOASTS').appendChild(el);
   requestAnimationFrame(function(){el.classList.add('show');});
-  setTimeout(function(){el.classList.remove('show');setTimeout(function(){el.remove();},250);},3000);
+  setTimeout(function(){el.classList.remove('show');setTimeout(function(){el.remove();},250);},3200);
 }
 
+var connBad=false;
+function setConn(bad){
+  if(bad===connBad)return;connBad=bad;
+  g('CONN').classList.toggle('show',bad);
+}
+
+/* FIX: previously network/CORS failures were silently swallowed (no toast,
+   textbox already cleared) — that's exactly what made "send" look broken
+   with zero feedback. Now every failure is surfaced. */
 async function api(action,body,noAuth){
   var h={'Content-Type':'application/json'};
   if(!noAuth)h['X-Session-Token']=TOKEN;
   try{
     var r=await fetch(CHAT_API,{method:'POST',headers:h,body:JSON.stringify(Object.assign({action:action},body||{}))});
-    var d=await r.json();
-    if(r.status===401){logout();return null;}
+    setConn(false);
+    var d=await r.json().catch(function(){return null;});
+    if(r.status===401){logout();return{success:false,error:'Session expired — please log in again'};}
+    if(!d)return{success:false,error:'Server HTTP '+r.status+' — invalid response'};
     return d;
-  }catch(e){return{success:false,_net:true,error:e.message};}
+  }catch(e){
+    setConn(true);
+    return{success:false,_net:true,error:'Network error: '+e.message};
+  }
 }
 
 /* AUTH */
@@ -408,6 +445,10 @@ window.addEventListener('DOMContentLoaded',function(){
     if(!g('ctx').contains(e.target))hideCtx();
     if(!g('epick').contains(e.target)&&!e.target.classList.contains('etog'))g('epick').classList.remove('show');
   });
+  document.addEventListener('visibilitychange',function(){
+    if(document.visibilityState==='visible'&&curChat){loadMessages();startPoll();}
+    else clearInterval(pollT);
+  });
   if(TOKEN)api('me').then(function(r){if(r&&r.success){ME=r.user;enterApp();}else{TOKEN='';localStorage.removeItem('ng_tok');}});
 });
 
@@ -420,12 +461,12 @@ window.toggleAuth=function(){
 async function submitAuth(){
   var un=g('inUser').value.trim(),pw=g('inPass').value;
   if(!un||!pw){g('authErr').textContent='Fill all fields';return;}
-  g('authErr').textContent='';g('authBtn').textContent='…';
+  g('authErr').textContent='';g('authBtn').textContent='…';g('authBtn').disabled=true;
   var r;
   if(isReg)r=await api('register',{username:un,password:pw,display_name:(g('inName').value.trim()||un)},true);
   else r=await api('login',{username:un,password:pw},true);
-  g('authBtn').textContent=isReg?'Create Account':'Continue';
-  if(!r||!r.success){g('authErr').textContent=r?r.error:'Connection failed';return;}
+  g('authBtn').textContent=isReg?'Create Account':'Continue';g('authBtn').disabled=false;
+  if(!r||!r.success){g('authErr').textContent=(r&&r.error)||'Connection failed';return;}
   TOKEN=r.token;ME=r.user;localStorage.setItem('ng_tok',TOKEN);enterApp();
 }
 
@@ -497,7 +538,7 @@ function openChat(id){
   var name=c.is_group?c.name:(c.peer?c.peer.display_name:'Unknown');
   curChat={type:'chat',id:id,name:name,is_group:!!c.is_group,peer:c.peer,avatarUrl:c.peer?c.peer.avatar_url:null};
   g('caName').textContent=name;
-  g('caSub').textContent=c.is_group?(c.member_count||'')+'members':(c.peer?'@'+c.peer.username:'');
+  g('caSub').textContent=c.is_group?(c.member_count||'')+' members':(c.peer?'@'+c.peer.username:'');
   setHeadAv(name,curChat.avatarUrl,false);
   g('cinput').style.display='';showChat();
 }
@@ -519,18 +560,21 @@ window.closeChat=function(){g('VC').classList.remove('open');clearInterval(pollT
 
 /* MESSAGES */
 async function loadMessages(){
-  if(!curChat)return;
-  var action=curChat.type==='chat'?'get_messages':'get_channel_messages';
-  var k=curChat.type==='chat'?'chat_id':'channel_id';
-  var body={limit:80};body[k]=curChat.id;
+  if(!curChat||!ME)return;
+  var chatSnapshot=curChat;
+  var action=chatSnapshot.type==='chat'?'get_messages':'get_channel_messages';
+  var k=chatSnapshot.type==='chat'?'chat_id':'channel_id';
+  var body={limit:80};body[k]=chatSnapshot.id;
   var r=await api(action,body);
   if(!r||!r.success)return;
+  if(curChat!==chatSnapshot)return; // user switched chats while this request was in flight
   renderMsgs(r.messages||[]);
 }
 
 function renderMsgs(msgs){
+  if(!ME)return;
   var wrap=g('msgs');
-  var atBot=wrap.scrollHeight-wrap.scrollTop-wrap.clientHeight<100;
+  var atBot=wrap.scrollHeight-wrap.scrollTop-wrap.clientHeight<120;
   if(!msgs.length){wrap.innerHTML='<div style="text-align:center;color:var(--muted);font-size:.82rem;padding:3rem 1rem">No messages yet. Say hello! 👋</div>';return;}
   var html='',lastD='',lastS='';
   msgs.forEach(function(m){
@@ -555,14 +599,21 @@ function mkBub(m,mine,showAv,showName){
   else if(m.type==='video'&&m.media_url)bh+='<video class="bvid" src="'+esc(m.media_url)+'" controls preload="none"></video>';
   else if(m.type==='file'&&m.media_url)bh+='<div class="bfile"><i class="fas fa-file"></i><a href="'+esc(m.media_url)+'" target="_blank">'+esc(m.media_name||'File')+'</a></div>';
   if(m.content)bh+='<div class="btxt">'+esc(m.content)+'</div>';
-  bh+='<div class="btime">'+tfull(m.created_at)+'</div>';
+  var statusIcon='';
+  if(mine){
+    if(m._pending)statusIcon='<i class="fas fa-clock"></i>';
+    else if(m._failed)statusIcon='<span class="retry" onclick="retrySend(\''+m.id+'\')">tap to retry</span>';
+    else statusIcon='<i class="fas fa-check"></i>';
+  }
+  bh+='<div class="btime">'+tfull(m.created_at)+' '+statusIcon+'</div>';
   var rxh='';
   if(m.reactions&&m.reactions.length){rxh='<div class="brxns">';m.reactions.forEach(function(rx){rxh+='<div class="rxp" onclick="qReact('+m.id+',\''+rx.emoji+'\')">'+rx.emoji+' <span class="rxc">'+rx.count+'</span></div>';});rxh+='</div>';}
+  var bubCls='bub'+(m._pending?' pending':'')+(m._failed?' failed':'');
   return '<div class="mrow '+(mine?'mine':'other')+'" data-id="'+m.id+'" data-cnt="'+esc(m.content||'')+'" data-sndr="'+esc(m.sender_name||'')+'" data-mine="'+(mine?1:0)+'">'
     +(mine?'':avh)
     +'<div class="mcont">'
       +(showName?'<div class="msname">'+esc(m.sender_name)+'</div>':'')
-      +'<div class="bub">'+bh+'</div>'+rxh
+      +'<div class="'+bubCls+'">'+bh+'</div>'+rxh
     +'</div>'
     +(mine?'<div class="mav-wrap"></div>':'')
     +'</div>';
@@ -583,18 +634,71 @@ function scrollToMsg(id){
   if(el){el.scrollIntoView({behavior:'smooth',block:'center'});var b=el.querySelector('.bub');b.style.outline='2px solid var(--accent)';setTimeout(function(){b.style.outline='';},1200);}
 }
 
-/* SEND */
+/* SEND — optimistic: bubble appears instantly, gets confirmed/replaced
+   once the server responds. Failure is always shown, text is restored
+   so nothing typed gets silently lost. */
+var pendingMsgs={};
 async function sendMsg(){
-  var text=g('msgIn').value.trim();if(!text||!curChat)return;
+  var text=g('msgIn').value.trim();
+  if(!text||!curChat||sending)return;
+  var chatSnapshot=curChat;
   g('msgIn').value='';g('msgIn').style.height='auto';
+  sending=true;g('sendBtn').disabled=true;
+
+  var tmpId='tmp_'+Date.now()+'_'+Math.random().toString(36).slice(2);
+  var tmp={id:tmpId,sender_id:ME.id,sender_name:ME.display_name,sender_avatar:ME.avatar_url,type:'text',content:text,created_at:Date.now(),_pending:true,reply_to:replyD?{id:replyD.id,sender_name:replyD.sender_name,content:replyD.content}:null};
+  pendingMsgs[tmpId]=tmp;
+  appendOptimistic(tmp);
+
   var action=curChat.type==='chat'?'send_message':'send_channel_message';
   var k=curChat.type==='chat'?'chat_id':'channel_id';
   var body={type:'text',content:text};body[k]=curChat.id;
+  var usedReply=replyD;
   if(replyD){body.reply_to_id=replyD.id;clearReply();}
+
   var r=await api(action,body);
-  if(r&&r.success){loadMessages();loadList();}
-  else if(r&&!r._net)toast(r.error||'Send failed','error');
+  sending=false;g('sendBtn').disabled=false;
+
+  if(r&&r.success){
+    delete pendingMsgs[tmpId];
+    if(curChat===chatSnapshot)loadMessages();
+    loadList();
+  }else{
+    tmp._pending=false;tmp._failed=true;
+    if(curChat===chatSnapshot)updateOptimistic(tmp);
+    toast((r&&r.error)||'Message not sent — tap it to retry','error');
+  }
 }
+
+function appendOptimistic(m){
+  var wrap=g('msgs');
+  if(wrap.querySelector('.l-empty')||!wrap.children.length){
+    var empty=wrap.querySelector('div');
+    if(empty&&wrap.children.length===1&&wrap.textContent.indexOf('No messages yet')>-1)wrap.innerHTML='';
+  }
+  wrap.insertAdjacentHTML('beforeend',mkBub(m,true,false,false));
+  wrap.scrollTop=wrap.scrollHeight;
+  attachBubEvts();
+}
+function updateOptimistic(m){
+  var el=g('msgs').querySelector('[data-id="'+m.id+'"]');
+  if(!el)return;
+  var repl=document.createElement('div');repl.innerHTML=mkBub(m,true,false,false);
+  el.replaceWith(repl.firstElementChild);
+  attachBubEvts();
+}
+window.retrySend=async function(tmpId){
+  var m=pendingMsgs[tmpId];if(!m||!curChat)return;
+  m._pending=true;m._failed=false;updateOptimistic(m);
+  var action=curChat.type==='chat'?'send_message':'send_channel_message';
+  var k=curChat.type==='chat'?'chat_id':'channel_id';
+  var body={type:m.type,content:m.content};body[k]=curChat.id;
+  if(m.reply_to)body.reply_to_id=m.reply_to.id;
+  var r=await api(action,body);
+  if(r&&r.success){delete pendingMsgs[tmpId];loadMessages();loadList();}
+  else{m._pending=false;m._failed=true;updateOptimistic(m);toast((r&&r.error)||'Still failing — check your connection','error');}
+};
+
 function autoH(){var t=g('msgIn');t.style.height='auto';t.style.height=Math.min(t.scrollHeight,110)+'px';}
 
 /* FILE UPLOAD — Telegram-like circular progress */
@@ -605,11 +709,10 @@ async function onFile(input){
   var type=isImg?'image':isVid?'video':'file';
   var tid='t'+Date.now();
 
-  /* Pending bubble with circle progress */
   var prevHtml=isImg||isVid?
     '<div class="upend" id="up_'+tid+'"><div class="ucirc-wrap"><svg viewBox="0 0 48 48" width="54" height="54"><circle class="ucirc-bg" cx="24" cy="24" r="22"/><circle class="ucirc-fill" id="cf_'+tid+'" cx="24" cy="24" r="22"/></svg><div class="upct" id="cp_'+tid+'">0%</div></div></div>':
     '<div style="display:flex;align-items:center;gap:.5rem;padding:.3rem 0" id="up_'+tid+'"><div class="ucirc-wrap"><svg viewBox="0 0 48 48" width="36" height="36"><circle class="ucirc-bg" cx="24" cy="24" r="22"/><circle class="ucirc-fill" id="cf_'+tid+'" cx="24" cy="24" r="22"/></svg><div class="upct" id="cp_'+tid+'" style="font-size:.55rem">0%</div></div><span style="font-size:.75rem;color:var(--muted2)">'+esc(file.name)+'</span></div>';
-  var tmpRow='<div class="mrow mine" id="row_'+tid+'"><div class="mav-wrap"></div><div class="mcont"><div class="bub">'+prevHtml+'<div class="btime">Sending…</div></div></div></div>';
+  var tmpRow='<div class="mrow mine" id="row_'+tid+'"><div class="mav-wrap"></div><div class="mcont"><div class="bub pending">'+prevHtml+'<div class="btime">Uploading…</div></div></div></div>';
   var msgs=g('msgs');
   msgs.insertAdjacentHTML('beforeend',tmpRow);
   msgs.scrollTop=msgs.scrollHeight;
@@ -625,13 +728,12 @@ async function onFile(input){
     var result=await new Promise(function(res,rej){
       var xhr=new XMLHttpRequest();
       xhr.upload.addEventListener('progress',function(e){if(e.lengthComputable)setPct(Math.round(e.loaded/e.total*100));});
-      xhr.onload=function(){try{res(JSON.parse(xhr.responseText));}catch(e){rej(new Error('Invalid response'));}};
-      xhr.onerror=function(){rej(new Error('Network error'));};
+      xhr.onload=function(){try{res(JSON.parse(xhr.responseText));}catch(e){rej(new Error('Invalid response ('+xhr.status+')'));}};
+      xhr.onerror=function(){rej(new Error('Network error during upload'));};
       xhr.open('POST',UPLOAD_API);xhr.send(fd);
     });
     var rowEl=document.getElementById('row_'+tid);if(rowEl)rowEl.remove();
     if(!result||!result.success){toast('Upload failed: '+(result&&result.error||'unknown'),'error');return;}
-    /* Use stream URL from upload response */
     var mediaUrl=(result.urls&&result.urls.stream)?result.urls.stream:'';
     if(!mediaUrl&&result.id){var ext=file.name.includes('.')?file.name.slice(file.name.lastIndexOf('.')):'';mediaUrl=BACKEND+'/btfstorage/server/'+result.id+ext;}
     var action=curChat.type==='chat'?'send_message':'send_channel_message';
@@ -642,7 +744,7 @@ async function onFile(input){
     if(r&&r.success){loadMessages();loadList();}
     else toast((r&&r.error)||'Send failed','error');
   }catch(e){
-    var rowEl=document.getElementById('row_'+tid);if(rowEl)rowEl.remove();
+    var rowEl2=document.getElementById('row_'+tid);if(rowEl2)rowEl2.remove();
     toast('Upload error: '+e.message,'error');
   }
 }
@@ -655,13 +757,13 @@ async function uploadAv(input){
   try{
     var r=await fetch(UPLOAD_API,{method:'POST',body:fd});
     var d=await r.json();
-    if(!d.success&&!d.id){toast('Upload failed','error');return;}
+    if(!d.success&&!d.id){toast('Upload failed: '+(d.error||'unknown'),'error');return;}
     var url=(d.urls&&d.urls.stream)?d.urls.stream:(BACKEND+'/btfstorage/server/'+(d.id||'')+(file.name.includes('.')?file.name.slice(file.name.lastIndexOf('.')):''));
     pendAv=url;
     var big=g('profAv');
     big.innerHTML='<img src="'+url+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">';
     toast('Avatar uploaded!','success');
-  }catch(e){toast('Upload error','error');}
+  }catch(e){toast('Upload error: '+e.message,'error');}
 }
 
 /* REPLY */
@@ -671,7 +773,7 @@ function setReply(d){replyD=d;g('rstrip').classList.add('show');g('rname').textC
 /* CTX */
 function showCtx(e,bel){
   var row=bel.closest('.mrow');
-  ctxD={id:+row.dataset.id,content:row.dataset.cnt,sender_name:row.dataset.sndr,mine:row.dataset.mine==='1'};
+  ctxD={id:row.dataset.id,content:row.dataset.cnt,sender_name:row.dataset.sndr,mine:row.dataset.mine==='1'};
   g('cxdel').style.display=ctxD.mine?'flex':'none';
   var ctx=g('ctx');ctx.classList.add('show');
   var x=e.clientX||e.pageX||0,y=e.clientY||e.pageY||0;
@@ -679,15 +781,19 @@ function showCtx(e,bel){
   ctx.style.top=Math.min(y,window.innerHeight-220)+'px';
 }
 function hideCtx(){g('ctx').classList.remove('show');ctxD=null;}
-window.doReact=async function(emoji){if(!ctxD)return;var a=curChat.type==='chat'?'react_message':'react_channel_message';await api(a,{message_id:ctxD.id,emoji:emoji});hideCtx();loadMessages();};
+window.doReact=async function(emoji){if(!ctxD||String(ctxD.id).indexOf('tmp_')===0)return;var a=curChat.type==='chat'?'react_message':'react_channel_message';await api(a,{message_id:ctxD.id,emoji:emoji});hideCtx();loadMessages();};
 window.qReact=async function(id,emoji){var a=curChat.type==='chat'?'react_message':'react_channel_message';await api(a,{message_id:id,emoji:emoji});loadMessages();};
 window.doReply=function(){if(!ctxD)return;setReply({id:ctxD.id,sender_name:ctxD.sender_name,content:ctxD.content});hideCtx();};
 window.doCopy=function(){if(!ctxD)return;navigator.clipboard&&navigator.clipboard.writeText(ctxD.content||'');toast('Copied!','info');hideCtx();};
 window.doDel=async function(){
   if(!ctxD||!ctxD.mine)return;
+  if(String(ctxD.id).indexOf('tmp_')===0){
+    var el=g('msgs').querySelector('[data-id="'+ctxD.id+'"]');if(el)el.remove();
+    delete pendingMsgs[ctxD.id];hideCtx();return;
+  }
   var a=curChat.type==='chat'?'delete_message':'delete_channel_message';
   var r=await api(a,{message_id:ctxD.id});
-  if(r&&r.success){toast('Deleted','info');loadMessages();}else toast('Delete failed','error');
+  if(r&&r.success){toast('Deleted','info');loadMessages();}else toast((r&&r.error)||'Delete failed','error');
   hideCtx();
 };
 
@@ -713,21 +819,21 @@ window.searchUsers=function(q){
 window.startDM=async function(un){
   closeSheet('shChat');
   var r=await api('create_chat',{is_group:false,peer_username:un});
-  if(!r||!r.success){toast(r?r.error:'Failed','error');return;}
+  if(!r||!r.success){toast((r&&r.error)||'Failed','error');return;}
   if(curTab!=='chats'){switchTab('chats');}else{await loadList();}
   await loadList();openChat(r.chat_id);
 };
 window.createGroup=async function(){
   var name=g('grpn').value.trim();if(!name){toast('Enter group name','error');return;}
   var r=await api('create_chat',{is_group:true,name:name,member_usernames:[]});
-  if(!r||!r.success){toast(r?r.error:'Failed','error');return;}
+  if(!r||!r.success){toast((r&&r.error)||'Failed','error');return;}
   closeSheet('shChat');await loadList();openChat(r.chat_id);
 };
 window.createChannel=async function(){
   var name=g('chN').value.trim(),handle=g('chH').value.trim();
   if(!name||!handle){toast('Name and handle required','error');return;}
   var r=await api('create_channel',{name:name,handle:handle.replace(/^@/,''),description:g('chD').value.trim(),post_mode:g('chM').value});
-  if(!r||!r.success){toast(r?r.error:'Failed','error');return;}
+  if(!r||!r.success){toast((r&&r.error)||'Failed','error');return;}
   toast('Channel created!','success');closeSheet('shChan');
   if(curTab!=='channels')switchTab('channels');else{await loadList();openChannel(r.channel_id);}
 };
@@ -760,13 +866,10 @@ window.saveProfile=async function(){
   if(pendAv)body.avatar_url=pendAv;
   if(!Object.keys(body).length){closeSheet('shProf');return;}
   var r=await api('update_profile',body);
-  if(!r||!r.success){toast(r?r.error:'Failed','error');return;}
+  if(!r||!r.success){toast((r&&r.error)||'Failed','error');return;}
   ME=r.user;pendAv=null;toast('Profile updated!','success');closeSheet('shProf');loadList();
 };
-g('shProf').addEventListener('click',function(){});
 
-/* Open profile — fill data */
-document.getElementById('shProf').addEventListener('transitionend',function(){});
 window.openSheet=function(id){
   if(id==='shProf'){
     if(!ME)return;
@@ -806,15 +909,22 @@ window.openInfo=async function(){
 };
 window.togAdmin=async function(cid,uid,curRole){
   var r=await api('update_channel_member',{channel_id:cid,target_user_id:uid,role:curRole==='admin'?'member':'admin'});
-  if(r&&r.success){toast('Role updated','success');openInfo();}
+  if(r&&r.success){toast('Role updated','success');openInfo();}else toast((r&&r.error)||'Failed','error');
 };
 window.leaveCh=async function(id){
   var r=await api('leave_channel',{channel_id:id});
   if(r&&r.success){closeSheet('shInfo');toast('Left','info');curChat=null;closeChat();loadList();}
+  else toast((r&&r.error)||'Failed','error');
 };
 
-/* POLL */
-function startPoll(){clearInterval(pollT);pollT=setInterval(function(){if(curChat)loadMessages();},3500);}
+/* POLL — near-real-time short polling. True push (WebSocket) needs a
+   Durable Object on Cloudflare; this is the practical option without
+   extra paid infra: fast interval, paused when tab is hidden, resumes
+   immediately (with an instant refresh) when the user comes back. */
+function startPoll(){
+  clearInterval(pollT);
+  pollT=setInterval(function(){if(curChat&&document.visibilityState==='visible')loadMessages();},1500);
+}
 </script>
 </body>
 </html>
