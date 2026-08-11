@@ -391,918 +391,787 @@ body.drag-active #DRAGOV{display:flex}
   </div>
 </div>
 
+<!-- index.html - Updated auth & messaging JS using action-based API -->
+<!-- All the HTML/CSS above stays exactly the same -->
+
 <script>
-// ── CONSTANTS ──────────────────────────────────────────────────────────────
-var BACKEND  = 'https://marya-hosting.pages.dev';
-var CHAT_API = BACKEND + '/btfstorage/chat';
-var UPLOAD_API = BACKEND + '/upload';
+// ============================================================
+// NEXAGRAM — Updated JS to work with existing Cloudflare backend
+// ============================================================
+(function(){
+'use strict';
 
-// ── STATE ──────────────────────────────────────────────────────────────────
-var ME = null;
-var curChat = null;      // {type:'dm'|'channel', id, name, ...}
-var curTab = 'dm';
-var replyD = null;       // {id, sender, text}
-var pollTimer = null;
-var pollInterval = 1500;
-var pollStreak = 0;
-var pendingMsgs = {};    // tmpId -> {body, chatSnapshot}
-var LR = {};             // chatKey -> lastReadId
-var lbImgs = [];         // lightbox image list
-var lbIdx = 0;
-var dragCounter = 0;
-var jumpPillTimer = null;
-var draftDebounce = null;
-var dmList = [];
-var chList = [];
+const API_BASE = 'https://marya-hosting.pages.dev/btfstorage/chat';
+const STORAGE  = localStorage;
 
-// ── UTILITIES ──────────────────────────────────────────────────────────────
-function g(id){ return document.getElementById(id); }
-function qs(sel,ctx){ return (ctx||document).querySelector(sel); }
-function qsa(sel,ctx){ return (ctx||document).querySelectorAll(sel); }
-function toast(msg,err){
-  var d=document.createElement('div');
-  d.className='toast'+(err?' err':'');
-  d.textContent=msg;
-  g('TOAST').appendChild(d);
-  setTimeout(function(){d.remove();},3000);
-}
-function fmtTime(ts){
-  if(!ts)return'';
-  var d=new Date(ts);
-  var now=new Date();
-  var diff=now-d;
-  if(diff<86400000){
-    return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+let currentUser = null;
+let currentChatId = null;
+let currentChat = null;
+let chats = {};
+let messages = {};
+let contextTarget = null;
+let replyData = null;
+let isRegister = false;
+
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+
+function apiCall(action, body = {}, noAuth = false) {
+  const headers = {'Content-Type': 'application/json'};
+  if (!noAuth && currentUser?.token) {
+    headers['X-Session-Token'] = currentUser.token;
   }
-  return d.toLocaleDateString([],{month:'short',day:'numeric'});
-}
-function fmtDay(ts){
-  var d=new Date(ts);
-  var now=new Date();
-  var diff=Math.floor((now-d)/86400000);
-  if(diff===0)return'Today';
-  if(diff===1)return'Yesterday';
-  return d.toLocaleDateString([],{month:'short',day:'numeric',year:'numeric'});
-}
-function initials(name){
-  if(!name)return'?';
-  var parts=name.trim().split(/\s+/);
-  return(parts[0][0]+(parts[1]?parts[1][0]:'')).toUpperCase();
-}
-function chatKey(){
-  if(!curChat)return'';
-  return(curChat.type==='dm'?'d':'c')+curChat.id;
-}
-function ls_get(k){
-  try{
-    var raw=localStorage.getItem(k);
-    if(!raw)return null;
-    var o=JSON.parse(raw);
-    if(o.exp&&Date.now()>o.exp){localStorage.removeItem(k);return null;}
-    return o.v;
-  }catch(e){return null;}
-}
-function ls_set(k,v,ttl){
-  try{
-    var o={v:v};
-    if(ttl)o.exp=Date.now()+ttl;
-    localStorage.setItem(k,JSON.stringify(o));
-  }catch(e){}
-}
-function ls_rm(k){try{localStorage.removeItem(k);}catch(e){}}
-
-// ── API ────────────────────────────────────────────────────────────────────
-var _netFailed=false;
-function api(action,body,noAuth){
-  var headers={'Content-Type':'application/json'};
-  var tok=localStorage.getItem('ng_tok');
-  if(!noAuth&&tok)headers['X-Session-Token']=tok;
-  var payload=Object.assign({action:action},body||{});
-  return fetch(CHAT_API,{
-    method:'POST',
-    headers:headers,
-    body:JSON.stringify(payload)
-  }).then(function(r){
-    if(r.status===401){
-      return null;
-    }
-    return r.json();
-  }).then(function(data){
-    if(_netFailed){
-      _netFailed=false;
-      g('CONN').classList.remove('show');
-    }
-    ng_updateBackoff(true);
+  return fetch(API_BASE, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({action, ...body})
+  }).then(r => r.json()).then(data => {
+    if (data.error === 'Unauthorized') logout();
     return data;
-  }).catch(function(e){
-    _netFailed=true;
-    g('CONN').classList.add('show');
-    ng_updateBackoff(false);
-    return {success:false,error:'network',_net:true};
+  }).catch(err => {
+    console.error('API Error:', err);
+    return {success: false, error: err.message || 'Network error'};
   });
 }
 
-// ── CONNECTIVITY ───────────────────────────────────────────────────────────
-function ng_connRetry(){
-  api('me').then(function(r){
-    if(r&&r.success){
-      g('CONN').classList.remove('show');
-      _netFailed=false;
-      loadList();
-    }else{
-      toast('Still offline',true);
-    }
-  });
+function loadSession() {
+  const u = STORAGE.getItem('nexagram_user');
+  if (u) try { return JSON.parse(u); } catch {}
+  return null;
 }
 
-// ── BACKOFF POLLING ────────────────────────────────────────────────────────
-function ng_updateBackoff(success){
-  if(success){
-    pollStreak++;
-    if(pollStreak>=10)pollInterval=15000;
-    else if(pollStreak>=3)pollInterval=5000;
-    else pollInterval=1500;
-  }else{
-    pollStreak=0;
-    pollInterval=1500;
+function saveSession(u) { STORAGE.setItem('nexagram_user', JSON.stringify(u)); }
+function clearSession() { STORAGE.removeItem('nexagram_user'); }
+
+function showToast(msg, type = 'info') {
+  const existing = $('#toast-container');
+  if (!existing) {
+    const tc = document.createElement('div');
+    tc.id = 'toast-container';
+    tc.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
+    document.body.appendChild(tc);
   }
+  
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.style.cssText = `
+    display:flex;align-items:center;gap:12px;
+    padding:13px 16px;background:rgba(19,20,29,0.9);
+    border:1px solid rgba(255,255,255,0.1);left-radius:8px;
+    box-shadow:0 4px 20px rgba(0,0,0,0.5);
+    font-size:13.5px;font-weight:500;color:#fff;
+    min-width:260px;max-width:360px;
+    animation:toastIn 0.35s cubic-bezier(0.16,1,0.3,1) both;
+    border-left:4px solid ${type === 'success' ? '#23d18b' : type === 'error' ? '#f04f5a' : '#5865f2'};
+  `;
+  toast.textContent = msg;
+  $('#toast-container').appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.3s';
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
 }
 
-function startPoll(){
-  stopPoll();
-  (function tick(){
-    if(document.hidden){pollTimer=setTimeout(tick,pollInterval);return;}
-    var p=curChat?loadMessages(true):loadList();
-    p.then(function(){
-      pollTimer=setTimeout(tick,pollInterval);
-    }).catch(function(){
-      ng_updateBackoff(false);
-      pollTimer=setTimeout(tick,pollInterval);
-    });
-  })();
+// AUTH
+function showAuth() { $('#auth-screen').classList.remove('hidden'); $('#app').classList.add('hidden'); }
+function showApp() { $('#auth-screen').classList.add('hidden'); $('#app').classList.remove('hidden'); }
+
+function updateAuthToggle() {
+  const isLogin = !isRegister;
+  $('#auth-title').textContent = isLogin ? 'Welcome back' : 'Create account';
+  $('#auth-subtitle').textContent = isLogin ? 'Sign in to continue to NexaGram' : 'Join NexaGram today';
+  $('#auth-btn').textContent = isLogin ? 'Sign In' : 'Create Account';
+  $('#auth-switch-link').textContent = isLogin ? 'Create account' : 'Sign in instead';
+  $('#auth-display-field').style.display = isRegister ? 'block' : 'none';
+  $('#auth-error').style.display = 'none';
 }
-function stopPoll(){if(pollTimer){clearTimeout(pollTimer);pollTimer=null;}}
-document.addEventListener('visibilitychange',function(){
-  if(!document.hidden&&ME)startPoll();
-  else stopPoll();
+
+$('#auth-switch-link').addEventListener('click', () => {
+  isRegister = !isRegister;
+  updateAuthToggle();
 });
 
-// ── AUTH ───────────────────────────────────────────────────────────────────
-function switchAuthTab(t){
-  g('tabLogin').classList.toggle('act',t==='login');
-  g('tabReg').classList.toggle('act',t==='reg');
-  g('loginForm').style.display=t==='login'?'':'none';
-  g('regForm').style.display=t==='reg'?'':'none';
-  g('authErr').style.display='none';
-}
-function showAuthErr(msg){
-  var el=g('authErr');
-  el.textContent=msg;
-  el.style.display='block';
-}
-function doLogin(){
-  var u=g('inUser').value.trim();
-  var p=g('inPass').value;
-  if(!u||!p){showAuthErr('Fill all fields.');return;}
-  api('login',{username:u,password:p},true).then(function(r){
-    if(!r){showAuthErr('Session error.');return;}
-    if(!r.success){showAuthErr(r.error||'Login failed.');return;}
-    if(!r.token||!r.user){showAuthErr('Invalid server response.');return;}
-    localStorage.setItem('ng_tok',r.token);
-    ME=r.user;
-    onLoggedIn();
-  });
-}
-function doRegister(){
-  var u=g('inRegUser').value.trim();
-  var n=g('inRegName').value.trim();
-  var p=g('inRegPass').value;
-  if(!u||!n||!p){showAuthErr('Fill all fields.');return;}
-  api('register',{username:u,display_name:n,password:p},true).then(function(r){
-    if(!r){showAuthErr('Session error.');return;}
-    if(!r.success){showAuthErr(r.error||'Registration failed.');return;}
-    if(!r.token||!r.user){showAuthErr('Invalid server response.');return;}
-    localStorage.setItem('ng_tok',r.token);
-    ME=r.user;
-    onLoggedIn();
-  });
-}
-function doLogout(){
-  localStorage.removeItem('ng_tok');
-  ME=null;curChat=null;dmList=[];chList=[];
-  stopPoll();
-  g('AUTH').style.display='flex';
-  g('APP').style.display='none';
-}
-function onLoggedIn(){
-  g('AUTH').style.display='none';
-  g('APP').style.display='flex';
-  if(!ME||!ME.display_name){ME=ME||{};ME.display_name=ME.username||'Me';}
-  g('myName').textContent=ME.display_name;
-  g('myAv').textContent=initials(ME.display_name);
-  // load saved LR
-  try{var saved=localStorage.getItem('ngr_LR');if(saved)LR=JSON.parse(saved);}catch(e){}
-  loadList();
-  startPoll();
-}
-function tryAutoLogin(){
-  var tok=localStorage.getItem('ng_tok');
-  if(!tok)return;
-  api('me').then(function(r){
-    if(r&&r.success&&r.user){
-      ME=r.user;
-      onLoggedIn();
-    }
-  });
-}
+$('#auth-password').addEventListener('keydown', e => {
+  if (e.key === 'Enter') $('#auth-btn').click();
+});
 
-// ── LIST ───────────────────────────────────────────────────────────────────
-function loadList(){
-  var p=curTab==='dm'?loadDMList():loadChannelList();
-  return p;
-}
-function switchTab(t){
-  curTab=t;
-  g('tabDM').classList.toggle('act',t==='dm');
-  g('tabCH').classList.toggle('act',t==='ch');
-  loadList();
-}
-function loadDMList(){
-  return api('list_chats').then(function(r){
-    if(!r||r._net)return;
-    if(r===null){doLogout();return;}
-    if(!r.success)return;
-    dmList=r.chats||[];
-    renderList(dmList,'dm');
-  });
-}
-function loadChannelList(){
-  return api('list_channels').then(function(r){
-    if(!r||r._net)return;
-    if(r===null){doLogout();return;}
-    if(!r.success)return;
-    chList=r.channels||[];
-    renderList(chList,'channel');
-  });
-}
-function renderList(items,type){
-  var el=g('LIST');
-  el.innerHTML='';
-  if(!items.length){
-    el.innerHTML='<div style="color:var(--muted);text-align:center;padding:24px;font-size:13px">'+(type==='dm'?'No chats yet':'No channels yet')+'</div>';
+$('#auth-btn').addEventListener('click', async () => {
+  const username = $('#auth-username').value.trim();
+  const password = $('#auth-password').value;
+  const display  = $('#auth-display').value.trim();
+  const errEl    = $('#auth-error');
+  errEl.style.display = 'none';
+  
+  if (!username || !password) {
+    errEl.textContent = 'Username and password required';
+    errEl.style.display = 'block';
     return;
   }
-  items.forEach(function(item){
-    var key=(type==='dm'?'d':'c')+item.id;
-    var lastId=item.last_message_id||(item.messages&&item.messages.length?item.messages[item.messages.length-1].id:0)||0;
-    var unread=LR[key]!==undefined&&lastId>LR[key];
-    var div=document.createElement('div');
-    div.className='li'+(curChat&&curChat.id===item.id&&curChat.type===type?' act':'')+(unread?' unread':'');
-    div.setAttribute('data-key',key);
-    var name=type==='dm'?(item.other_user_name||item.name||'Chat'):(item.name||'Channel');
-    var sub=item.last_message_text||item.description||'';
-    var ts=item.last_message_at||item.updated_at||'';
-    var avClass='av'+(type==='channel'?' ch':'');
-    var badge=unread?'<div class="unread-badge">!</div>':'';
-    div.innerHTML=
-      '<div class="'+avClass+'">'+initials(name)+'</div>'+
-      '<div class="info">'+
-        '<div class="lname">'+escHtml(name)+'</div>'+
-        '<div class="lsub">'+escHtml(sub.substring(0,40))+'</div>'+
-      '</div>'+
-      '<div class="ltime">'+
-        '<div class="ts">'+fmtTime(ts)+'</div>'+
-        badge+
-      '</div>';
-    div.onclick=function(){openItem(item,type);};
-    el.appendChild(div);
-  });
-}
-function ng_renderUnread(){
-  qsa('.li',g('LIST')).forEach(function(li){
-    var key=li.getAttribute('data-key');
-    if(!key)return;
-    var items=curTab==='dm'?dmList:chList;
-    var type=curTab==='dm'?'dm':'channel';
-    var item=items.find(function(i){return(type==='dm'?'d':'c')+i.id===key;});
-    if(!item)return;
-    var lastId=item.last_message_id||0;
-    var unread=LR[key]!==undefined&&lastId>LR[key];
-    li.classList.toggle('unread',unread);
-    var badge=li.querySelector('.unread-badge');
-    if(unread&&!badge){
-      var t=li.querySelector('.ltime');
-      if(t){var b=document.createElement('div');b.className='unread-badge';b.textContent='!';t.appendChild(b);}
-    }else if(!unread&&badge){badge.remove();}
-  });
-}
-function ng_markRead(key,lastId){
-  LR[key]=lastId;
-  try{localStorage.setItem('ngr_LR',JSON.stringify(LR));}catch(e){}
-  ng_renderUnread();
+  if (isRegister && !display) {
+    errEl.textContent = 'Display name required';
+    errEl.style.display = 'block';
+    return;
+  }
+  
+  const btn = $('#auth-btn');
+  btn.disabled = true;
+  btn.textContent = 'Please wait...';
+  
+  try {
+    const endpoint = isRegister ? 'register' : 'login';
+    const body = isRegister 
+      ? {username, password, display_name: display} 
+      : {username, password};
+    
+    const data = await apiCall(endpoint, body, true);
+    
+    if (data.success && data.token) {
+      currentUser = {token: data.token, ...data.user};
+      saveSession(currentUser);
+      showApp();
+      initApp();
+    } else {
+      errEl.textContent = data.error || 'Login failed';
+      errEl.style.display = 'block';
+    }
+  } catch(e) {
+    errEl.textContent = e.message;
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = isRegister ? 'Create Account' : 'Sign In';
+  }
+});
+
+// APP INIT
+function initApp() {
+  loadChats();
+  initEmojiPicker();
+  initBottomSheets();
 }
 
-// ── OPEN CHAT / CHANNEL ────────────────────────────────────────────────────
-function openItem(item,type){
-  curChat={type:type,id:item.id,name:type==='dm'?(item.other_user_name||item.name):(item.name),data:item};
-  replyD=null;
-  g('repStrip').style.display='none';
-  ng_restoreDraft();
-  // update header
-  g('CHAT').style.display='flex';
-  g('PH').style.display='none';
-  g('mHdAv').textContent=initials(curChat.name);
-  g('mHdAv').className='av2'+(type==='channel'?' ch':'');
-  g('mHdName').textContent=curChat.name;
-  g('mHdSub').textContent=type==='channel'?'Channel':'Direct Message';
-  // mark list active
-  qsa('.li',g('LIST')).forEach(function(li){li.classList.remove('act');});
-  var key=chatKey();
-  var li=qs('[data-key="'+key+'"]',g('LIST'));
-  if(li)li.classList.add('act');
-  // mobile
-  if(window.innerWidth<=680)g('SIDE').classList.add('hide');
-  loadMessages();
-}
-function goBack(){
-  if(window.innerWidth<=680)g('SIDE').classList.remove('hide');
-  curChat=null;
-  g('CHAT').style.display='none';
-  g('PH').style.display='flex';
-}
-function openInfo(){
-  if(!curChat)return;
-  if(curChat.type==='channel')openMembersPane();
-}
-
-// ── MESSAGES ──────────────────────────────────────────────────────────────
-function loadMessages(silent){
-  if(!curChat)return Promise.resolve();
-  var snap=curChat;
-  var key=chatKey();
-  var action=curChat.type==='dm'?'get_messages':'get_channel_messages';
-  var body=curChat.type==='dm'?{chat_id:curChat.id}:{channel_id:curChat.id};
-  return api(action,body).then(function(r){
-    if(!r||r._net)return;
-    if(r===null){doLogout();return;}
-    if(curChat!==snap)return; // guard stale
-    if(!r.success)return;
-    var msgs=r.messages||[];
-    renderMessages(msgs);
-    if(msgs.length){
-      ng_markRead(key,msgs[msgs.length-1].id);
-    }
-  });
-}
-function renderMessages(msgs){
-  var el=g('msgs');
-  var atBottom=el.scrollHeight-el.scrollTop-el.clientHeight<80;
-  el.innerHTML='';
-  var lastDay='';
-  // collect images for lightbox
-  lbImgs=[];
-  msgs.forEach(function(m){
-    var day=fmtDay(m.created_at);
-    if(day!==lastDay){
-      lastDay=day;
-      var dd=document.createElement('div');
-      dd.className='dayDiv';
-      dd.innerHTML='<span>'+escHtml(day)+'</span>';
-      el.appendChild(dd);
-    }
-    el.appendChild(buildBubble(m));
-    if(m.media_url&&isImgUrl(m.media_url))lbImgs.push({src:m.media_url,id:m.id});
-  });
-  // add pending that are not yet confirmed
-  Object.keys(pendingMsgs).forEach(function(tid){
-    var pm=pendingMsgs[tid];
-    if(pm.chatKey===chatKey()&&!el.querySelector('#'+tid)){
-      el.appendChild(buildPendingBubble(tid,pm));
-    }
-  });
-  if(atBottom)el.scrollTop=el.scrollHeight;
-  attachBubEvts();
-}
-function buildBubble(m){
-  var isMe=ME&&m.sender_id===ME.id;
-  var wrap=document.createElement('div');
-  wrap.className='bub '+(isMe?'me':'ot');
-  wrap.setAttribute('data-id',m.id);
-  var inner='';
-  if(!isMe&&m.sender_name){
-    inner+='<div class="bsender">'+escHtml(m.sender_name)+'</div>';
-  }
-  if(m.reply_to_id){
-    inner+='<div class="brep" data-repid="'+m.reply_to_id+'">'
-      +'<i class="fas fa-reply" style="font-size:10px;margin-right:4px"></i>'
-      +escHtml((m.reply_to_sender||'')+(m.reply_to_text?': '+m.reply_to_text.substring(0,60):''))
-      +'</div>';
-  }
-  inner+='<div class="bcont">';
-  if(m.media_url){
-    if(isImgUrl(m.media_url)){
-      inner+='<img class="bimg" src="'+escHtml(m.media_url)+'" data-src="'+escHtml(m.media_url)+'"/>';
-    }else{
-      inner+='<a href="'+escHtml(m.media_url)+'" target="_blank" style="color:var(--accent)"><i class="fas fa-file"></i> Attachment</a>';
-    }
-  }
-  if(m.content){inner+=escHtml(m.content);}
-  inner+='</div>';
-  // reactions
-  var reacts=m.reactions||[];
-  if(reacts.length){
-    inner+='<div class="breact">';
-    var rmap={};
-    reacts.forEach(function(r){rmap[r.emoji]=(rmap[r.emoji]||0)+1;});
-    Object.keys(rmap).forEach(function(em){
-      inner+='<span class="react-btn" data-msgid="'+m.id+'" data-em="'+escHtml(em)+'">'+escHtml(em)+' '+rmap[em]+'</span>';
-    });
-    inner+='</div>';
-  }
-  inner+='<div class="btime">'+fmtTime(m.created_at)
-    +' <span class="react-add" data-msgid="'+m.id+'" title="React"><i class="fas fa-smile" style="font-size:10px"></i></span>'
-    +(isMe?' <span class="del-msg" data-msgid="'+m.id+'" title="Delete"><i class="fas fa-trash" style="font-size:10px;color:var(--muted)"></i></span>':'')
-    +' <span class="rep-btn" data-msgid="'+m.id+'" data-sender="'+escHtml(m.sender_name||ME&&ME.display_name||'')+'" data-txt="'+escHtml((m.content||'').substring(0,80))+'" title="Reply"><i class="fas fa-reply" style="font-size:10px"></i></span>'
-    +'</div>';
-  wrap.innerHTML=inner;
-  return wrap;
-}
-function buildPendingBubble(tid,pm){
-  var wrap=document.createElement('div');
-  wrap.className='bub me '+(pm.failed?'failed':'pending');
-  wrap.id=tid;
-  var inner='<div class="bcont">';
-  if(pm.body.content)inner+=escHtml(pm.body.content);
-  if(pm.body.media_url){
-    if(isImgUrl(pm.body.media_url)){
-      inner+='<img class="bimg" src="'+escHtml(pm.body.media_url)+'"/>';
-    }
-  }
-  inner+='</div>';
-  inner+='<div class="btime">'+(pm.failed?'Failed <span class="retry" onclick="retrySend(\''+tid+'\')">tap to retry</span>':'Sending...')+'</div>';
-  wrap.innerHTML=inner;
-  return wrap;
-}
-function attachBubEvts(){
-  var el=g('msgs');
-  // reply
-  qsa('.rep-btn',el).forEach(function(btn){
-    btn.onclick=function(e){
-      e.stopPropagation();
-      replyD={id:btn.getAttribute('data-msgid'),sender:btn.getAttribute('data-sender'),text:btn.getAttribute('data-txt')};
-      g('repStrip').style.display='flex';
-      g('repName').textContent=replyD.sender;
-      g('repTxt').innerHTML='Replying to <strong>'+escHtml(replyD.sender)+'</strong>';
-      g('msgIn').focus();
-    };
-  });
-  // react add
-  qsa('.react-add',el).forEach(function(btn){
-    btn.onclick=function(e){
-      e.stopPropagation();
-      showReactPicker(btn.getAttribute('data-msgid'),btn);
-    };
-  });
-  // react btn (add same)
-  qsa('.react-btn',el).forEach(function(btn){
-    btn.onclick=function(e){
-      e.stopPropagation();
-      sendReact(btn.getAttribute('data-msgid'),btn.getAttribute('data-em'));
-    };
-  });
-  // delete
-  qsa('.del-msg',el).forEach(function(btn){
-    btn.onclick=function(e){
-      e.stopPropagation();
-      deleteMsg(btn.getAttribute('data-msgid'));
-    };
-  });
-  // reply jump
-  qsa('.brep',el).forEach(function(div){
-    div.onclick=function(){scrollToMsg(div.getAttribute('data-repid'));};
-  });
-  // lightbox
-  qsa('.bimg',el).forEach(function(img){
-    img.onclick=function(){ng_openLightbox(img.getAttribute('src'),lbImgs);};
-  });
-}
-
-// ── SEND ───────────────────────────────────────────────────────────────────
-function sendMsg(){
-  if(!curChat)return;
-  var txt=g('msgIn').value.trim();
-  if(!txt&&!pendingMsgs._pendingFile)return;
-  var snap=curChat;
-  var key=chatKey();
-  var tmpId='tmp_'+Math.random().toString(36).slice(2);
-  var body={};
-  if(curChat.type==='dm')body.chat_id=curChat.id;
-  else body.channel_id=curChat.id;
-  if(txt)body.content=txt;
-  if(replyD)body.reply_to_id=replyD.id;
-  var savedReply=replyD;
-  // optimistic
-  pendingMsgs[tmpId]={body:body,chatKey:key,failed:false,replyD:savedReply};
-  var pb=buildPendingBubble(tmpId,pendingMsgs[tmpId]);
-  g('msgs').appendChild(pb);
-  g('msgs').scrollTop=g('msgs').scrollHeight;
-  // clear UI
-  g('msgIn').value='';
-  autoGrow(g('msgIn'));
-  clearReply();
-  ng_clearDraft();
-  var action=curChat.type==='dm'?'send_message':'send_channel_message';
-  api(action,body).then(function(r){
-    if(!r||r._net){
-      markFailed(tmpId,txt,savedReply);
-      return;
-    }
-    if(r===null){doLogout();return;}
-    if(!r.success){
-      toast(r.error||'Send failed',true);
-      markFailed(tmpId,txt,savedReply);
-      return;
-    }
-    delete pendingMsgs[tmpId];
-    if(curChat!==snap){
-      toast('Message sent to '+snap.name);
-      return;
-    }
-    loadMessages(true);
-    loadList();
-  });
-}
-function markFailed(tmpId,txt,savedReply){
-  if(pendingMsgs[tmpId])pendingMsgs[tmpId].failed=true;
-  var el=g(tmpId);
-  if(el){
-    el.classList.remove('pending');
-    el.classList.add('failed');
-    var bt=el.querySelector('.btime');
-    if(bt)bt.innerHTML='Failed <span class="retry" onclick="retrySend(\''+tmpId+'\')">tap to retry</span>';
-  }
-  // restore text if not already typed something else
-  if(txt&&!g('msgIn').value.trim()){
-    g('msgIn').value=txt;
-    autoGrow(g('msgIn'));
-  }
-  if(savedReply&&!replyD){
-    replyD=savedReply;
-    g('repStrip').style.display='flex';
-    g('repName').textContent=replyD.sender;
-  }
-}
-function retrySend(tmpId){
-  var pm=pendingMsgs[tmpId];
-  if(!pm)return;
-  if(!curChat||chatKey()!==pm.chatKey){toast('Switch back to retry');return;}
-  pm.failed=false;
-  var el=g(tmpId);
-  if(el){el.classList.remove('failed');el.classList.add('pending');var bt=el.querySelector('.btime');if(bt)bt.textContent='Sending...';}
-  var snap=curChat;
-  var action=curChat.type==='dm'?'send_message':'send_channel_message';
-  api(action,pm.body).then(function(r){
-    if(!r||r._net){pm.failed=true;var el=g(tmpId);if(el){el.classList.remove('pending');el.classList.add('failed');var bt=el.querySelector('.btime');if(bt)bt.innerHTML='Failed <span class="retry" onclick="retrySend(\''+tmpId+'\')">tap to retry</span>';}return;}
-    if(!r.success){toast(r.error||'Retry failed',true);pm.failed=true;return;}
-    delete pendingMsgs[tmpId];
-    if(curChat!==snap){toast('Message sent to '+snap.name);return;}
-    loadMessages(true);loadList();
-  });
-}
-function deleteMsg(id){
-  if(!curChat)return;
-  var action=curChat.type==='dm'?'delete_message':'delete_channel_message';
-  var body=curChat.type==='dm'?{message_id:id}:{message_id:id};
-  api(action,body).then(function(r){
-    if(!r)return;
-    if(r.success)loadMessages(true);
-    else toast(r.error||'Cannot delete',true);
-  });
-}
-
-// ── REACTIONS ─────────────────────────────────────────────────────────────
-var EMOJIS=['👍','❤️','😂','😮','😢','🔥'];
-function showReactPicker(msgId,anchor){
-  qsa('.react-picker').forEach(function(p){p.remove();});
-  var picker=document.createElement('div');
-  picker.className='react-picker';
-  EMOJIS.forEach(function(em){
-    var s=document.createElement('span');
-    s.className='react-pick-em';
-    s.textContent=em;
-    s.onclick=function(){picker.remove();sendReact(msgId,em);};
-    picker.appendChild(s);
-  });
-  anchor.appendChild(picker);
-  setTimeout(function(){document.addEventListener('click',function h(){picker.remove();document.removeEventListener('click',h);},{once:true});},50);
-}
-function sendReact(msgId,emoji){
-  if(!curChat)return;
-  var action=curChat.type==='dm'?'react_message':'react_channel_message';
-  var body={message_id:msgId,emoji:emoji};
-  api(action,body).then(function(r){if(r&&r.success)loadMessages(true);});
-}
-
-// ── REPLY ─────────────────────────────────────────────────────────────────
-function clearReply(){
-  replyD=null;
-  g('repStrip').style.display='none';
-}
-function scrollToMsg(id){
-  var el=g('msgs').querySelector('[data-id="'+id+'"]');
-  if(el){el.scrollIntoView({behavior:'smooth',block:'center'});el.style.outline='2px solid var(--accent)';setTimeout(function(){el.style.outline='';},1500);}
-  else{ng_showJumpPill(id);}
-}
-function ng_showJumpPill(id){
-  ng_hideJumpPill();
-  var pill=document.createElement('div');
-  pill.className='repjump';
-  pill.id='REPJUMP';
-  pill.textContent='↞ Jump to replied message';
-  pill.onclick=function(){ng_hideJumpPill();};
-  g('msgs').insertBefore(pill,g('msgs').firstChild);
-  jumpPillTimer=setTimeout(ng_hideJumpPill,6000);
-}
-function ng_hideJumpPill(){
-  if(jumpPillTimer){clearTimeout(jumpPillTimer);jumpPillTimer=null;}
-  var p=g('REPJUMP');if(p)p.remove();
-}
-
-// ── SCROLL ────────────────────────────────────────────────────────────────
-function onMsgsScroll(){}
-
-// ── FILE / UPLOAD ──────────────────────────────────────────────────────────
-function onFileInput(inp){
-  if(!inp.files||!inp.files[0])return;
-  onFile(inp.files[0]);
-  inp.value='';
-}
-function onFile(file){
-  if(!curChat){toast('Open a chat first',true);return;}
-  var snap=curChat;
-  var formData=new FormData();
-  formData.append('file',file);
-  var tok=localStorage.getItem('ng_tok');
-  var headers={};
-  if(tok)headers['X-Session-Token']=tok;
-  toast('Uploading…');
-  fetch(UPLOAD_API,{method:'POST',headers:headers,body:formData})
-    .then(function(r){return r.json();})
-    .then(function(r){
-      if(!r||!r.success){toast(r&&r.error||'Upload failed',true);return;}
-      var url=r.url||r.file_url||r.path;
-      if(!url){toast('No URL returned',true);return;}
-      if(curChat!==snap){toast('Upload done but chat switched');return;}
-      var key=chatKey();
-      var tmpId='tmp_'+Math.random().toString(36).slice(2);
-      var body={};
-      if(curChat.type==='dm')body.chat_id=curChat.id;
-      else body.channel_id=curChat.id;
-      body.media_url=url;
-      pendingMsgs[tmpId]={body:body,chatKey:key,failed:false};
-      var pb=buildPendingBubble(tmpId,pendingMsgs[tmpId]);
-      g('msgs').appendChild(pb);
-      g('msgs').scrollTop=g('msgs').scrollHeight;
-      var action=curChat.type==='dm'?'send_message':'send_channel_message';
-      api(action,body).then(function(r2){
-        delete pendingMsgs[tmpId];
-        if(!r2||!r2.success){toast(r2&&r2.error||'Send failed',true);return;}
-        if(curChat!==snap)return;
-        loadMessages(true);loadList();
+// CHAT LIST
+async function loadChats() {
+  try {
+    const data = await apiCall('list_chats');
+    if (data.success && data.chats) {
+      data.chats.forEach(c => { 
+        chats[c.id] = c;
+        // For direct chats, set name from peer
+        if (!c.is_group && c.peer) {
+          c.name = c.peer.display_name || 'Unknown';
+          c.online = Math.random() > 0.5; // Simulated
+        }
+        if (c.is_group) {
+          c.name = c.name || 'Group';
+        }
       });
-    })
-    .catch(function(){toast('Upload error',true);});
+      renderChatList();
+    }
+  } catch(e) {
+    console.warn('loadChats', e);
+  }
 }
 
-// ── DRAG AND DROP (A2) ─────────────────────────────────────────────────────
-function ng_onDrop(e){
+function renderChatList(filter='all', query='') {
+  const container = $('#chat-list-container');
+  container.innerHTML = '';
+  
+  const list = Object.values(chats).filter(c => {
+    if (filter === 'direct')    return !c.is_group;
+    if (filter === 'groups')   return c.is_group;
+    if (filter === 'channels') return false;
+    return true;
+  }).filter(c => !query || (c.name||'').toLowerCase().includes(query.toLowerCase()));
+
+  if (!list.length) {
+    container.innerHTML = '<div class="chat-section-label" style="text-align:center;padding:32px 16px">No conversations yet</div>';
+    return;
+  }
+
+  list.sort((a,b) => (b.last_at || b.created_at || 0) - (a.last_at || a.created_at || 0));
+
+  list.forEach(chat => {
+    const item = document.createElement('div');
+    item.className = `chat-item${currentChatId === chat.id ? ' active' : ''}`;
+    item.dataset.id = chat.id;
+    item.onclick = () => openChat(chat);
+
+    const avWrap = document.createElement('div');
+    avWrap.className = 'avatar';
+    const avImg = document.createElement('div');
+    avImg.className = `avatar-img ${avatarColor(chat.name)}`;
+    avImg.textContent = initials(chat.name);
+    avWrap.appendChild(avImg);
+    if (!chat.is_group && chat.online) {
+      avWrap.innerHTML += '<div class="online-dot"></div>';
+    }
+    item.appendChild(avWrap);
+
+    const info = document.createElement('div');
+    info.className = 'chat-item-info';
+    
+    const row1 = document.createElement('div');
+    row1.className = 'chat-item-row1';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'chat-item-name';
+    nameEl.textContent = chat.name || 'Unnamed';
+    const timeEl = document.createElement('span');
+    timeEl.className = 'chat-item-time';
+    timeEl.textContent = fmtTime(chat.last_at || chat.created_at);
+    row1.append(nameEl, timeEl);
+
+    const row2 = document.createElement('div');
+    row2.className = 'chat-item-row2';
+    const prev = document.createElement('span');
+    prev.className = 'chat-item-preview';
+    prev.textContent = chat.last_message || 'No messages yet';
+    row2.appendChild(prev);
+
+    info.append(row1, row2);
+    item.appendChild(info);
+    container.appendChild(item);
+  });
+}
+
+// Tabs
+$$('.sidebar-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    $$('.sidebar-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    renderChatList(tab.dataset.tab, $('#sidebar-search-input').value);
+  });
+});
+
+// Search
+$('#sidebar-search-btn').addEventListener('click', toggleSearchBar);
+function toggleSearchBar() {
+  const bar = $('#sidebar-search-bar');
+  bar.classList.toggle('hidden');
+  if (!bar.classList.contains('hidden')) {
+    $('#sidebar-search-input').focus();
+  } else {
+    renderChatList();
+  }
+}
+$('#sidebar-search-input').addEventListener('input', e => {
+  const active = $('.sidebar-tab.active');
+  renderChatList(active?.dataset.tab || 'all', e.target.value);
+});
+
+// OPEN CHAT
+async function openChat(chat) {
+  if (typeof chat === 'number' || typeof chat === 'string') {
+    chat = chats[chat];
+  }
+  if (!chat) return;
+  
+  currentChatId = chat.id;
+  currentChat = chat;
+  
+  $('#empty-state').classList.add('hidden');
+  $('#chat-view').classList.remove('hidden');
+  
+  // Header
+  const avEl = $('#chat-header-avatar-img');
+  avEl.className = `avatar-img ${avatarColor(chat.name)}`;
+  avEl.textContent = initials(chat.name);
+  $('#chat-header-name').textContent = chat.name || 'Chat';
+  
+  const statusEl = $('#chat-header-status');
+  if (chat.is_group) {
+    statusEl.textContent = `${chat.member_count || 2} members`;
+    statusEl.className = '';
+    $('#chat-input-area').classList.remove('hidden');
+    $('#channel-input-placeholder').classList.add('hidden');
+  } else {
+    statusEl.textContent = chat.online ? 'online' : 'offline';
+    statusEl.className = chat.online ? 'online' : '';
+    $('#chat-input-area').classList.remove('hidden');
+    $('#channel-input-placeholder').classList.add('hidden');
+  }
+  
+  // Update sidebar active state
+  $$('.chat-item').forEach(i => {
+    i.classList.toggle('active', i.dataset.id == chat.id);
+  });
+  
+  // Load messages
+  messages[chat.id] = [];
+  await loadMessages();
+}
+function renderChatList(){}
+
+// MESSAGES
+async function loadMessages() {
+  if (!currentChat || !currentChat.id) return;
+  
+  const action = currentChat.type === 'channel' ? 'get_channel_messages' : 'get_messages';
+  const key = currentChat.type === 'channel' ? 'channel_id' : 'chat_id';
+  
+  const data = await apiCall(action, {[key]: currentChat.id, limit: 50});
+  
+  if (data.success && data.messages) {
+    messages[currentChat.id] = data.messages;
+    renderMessages(data.messages);
+  }
+}
+
+function renderMessages(msgs) {
+  const container = $('#messages-container');
+  
+  if (!msgs.length) {
+    container.innerHTML = '<div style="text-align:center;color:var(--text-muted);font-size:13px;padding:32px 16px">No messages yet. Say hello! 👋</div>';
+    return;
+  }
+  
+  let html = '';
+  let lastDate = '';
+  
+  msgs.forEach(msg => {
+    const msgDate = new Date(msg.created_at).toDateString();
+    if (msgDate !== lastDate) {
+      html += `<div class="date-separator"><div class="date-separator-line"></div><span class="date-separator-label">${fmtDate(msg.created_at)}</span><div class="date-separator-line"></div></div>`;
+      lastDate = msgDate;
+    }
+    
+    const mine = msg.sender_id === currentUser.id;
+    html += renderMessage(msg, mine);
+  });
+  
+  container.innerHTML = html;
+  container.scrollTop = container.scrollHeight;
+}
+
+function renderMessages() {}
+
+function renderMessage(msg, mine) {
+  const time = fmtTime(msg.created_at);
+  const senderName = msg.sender_name || 'Unknown';
+  
+  let contentHtml = '';
+  if (msg.type === 'image' && msg.media_url) {
+    contentHtml = `<img src="${msg.media_url}" class="message-media" loading="lazy" onclick="openLightbox('${msg.media_url}')">`;
+  } else if (msg.type === 'video' && msg.media_url) {
+    contentHtml = `<video src="${msg.media_url}" class="message-media" controls preload="none"></video>`;
+  } else if (msg.type === 'file' && msg.media_url) {
+    const fileName = msg.media_name || 'File';
+    const fileExt = fileName.split('.').pop() || 'file';
+    contentHtml = `<div class="message-file"><div class="file-icon-wrap"><i class="fas fa-file"></i></div><div class="file-details"><div class="file-name">${fileExt.toUpperCase()} • ${fileName}</div><div class="file-size">${formatFileSize(msg.media_url)}</div></div></div>`;
+  } else {
+    const content = msg.content || '';
+    const contentEscaped = escHtml(content);
+    contentHtml = `<div class="btxt">${contentEscaped}</div>`;
+  }
+  
+  // Reply
+  let replyHtml = '';
+  if (msg.reply_to) {
+    replyHtml = `<div class="reply-preview">
+      <div class="reply-sender">${escHtml(msg.reply_to.sender_name || '')}</div>
+      <div class="reply-text">${escHtml(msg.reply_to.content || '[Media]')}</div>
+    </div>`;
+  }
+  
+  // Reactions
+  let reactionsHtml = '';
+  if (msg.reactions && msg.reactions.length) {
+    reactionsHtml = '<div class="reactions-row">';
+    msg.reactions.forEach(rx => {
+      reactionsHtml += `<div class="reaction-pill" onclick="reactToMessage(${msg.id}, '${rx.emoji}')">${rx.emoji} <span class="reaction-count">${rx.count}</span></div>`;
+    });
+    reactionsHtml += '</div>';
+  }
+  
+  return `
+  <div class="message-group ${mine ? 'own' : 'other'}">
+    <div class="message-row ${mine ? 'own' : 'other'}" data-id="${msg.id}">
+      <div class="msg-avatar-slot">
+        <div class="msg-avatar ${avatarColor(senderName)}">${initials(senderName)}</div>
+      </div>
+      <div class="message-bubble">
+        ${!mine && msg.sender_name ? `<div class="bubble-sender">${escHtml(senderName)}</div>` : ''}
+        ${replyHtml}
+        ${contentHtml}
+        <div class="bubble-meta">
+          <span class="bubble-time">${time}</span>
+          ${reactionsHtml}
+        </div>
+      </div>
+      ${mine ? '<div class="msg-avatar-slot"></div>' : ''}
+    </div>
+  </div>`;
+}
+
+// SEND MESSAGE
+async function sendMessage() {
+  const input = $('#message-input');
+  const text = input.value.trim();
+  
+  if (!text || !currentChat) return;
+  
+  const action = currentChat.type === 'channel' ? 'send_channel_message' : 'send_message';
+  const key = currentChat.type === 'channel' ? 'channel_id' : 'chat_id';
+  
+  const payload = {
+    type: 'text',
+    content: text,
+    [key]: currentChat.id,
+    reply_to_id: replyData ? replyData.id : null
+  };
+  
+  input.value = '';
+  clearReply();
+  
+  const data = await apiCall(action, payload);
+  
+  if (data.success) {
+    await loadMessages();
+  } else {
+    showToast(data.error || 'Failed to send message', 'error');
+    input.value = text;
+  }
+}
+
+// File upload
+async function onFile(input) {
+  const file = input.files[0];
+  if (!file || !currentChat) {
+    input.value = '';
+    return;
+  }
+  input.value = '';
+  
+  const formData = new FormData();
+  formData.append('file', file, file.name);
+  
+  try {
+    const uploadRes = await fetch('https://marya-hosting.pages.dev/btfstorage/upload', {
+      method: 'POST',
+      body: formData
+    });
+    const uploadData = await uploadRes.json();
+    
+    if (uploadData.success || uploadData.id) {
+      const mediaUrl = uploadData.urls?.stream || 
+        `https://marya-hosting.pages.dev/btfstorage/server/${uploadData.id}`;
+      
+      const fileType = file.type.startsWith('image/') ? 'image' :
+                       file.type.startsWith('video/') ? 'video' : 'file';
+      
+      const action = currentChat.type === 'channel' ? 'send_channel_message' : 'send_message';
+      const key = currentChat.type === 'channel' ? 'channel_id' : 'chat_id';
+      
+      const payload = {
+        type: fileType,
+        content: '',
+        media_url: mediaUrl,
+        media_name: file.name,
+        [key]: currentChat.id,
+        reply_to_id: replyData ? replyData.id : null
+      };
+      
+      await apiCall(action, payload);
+      await loadMessages();
+    } else {
+      showToast('Upload failed: ' + (uploadData.error || 'Unknown error'), 'error');
+    }
+  } catch(e) {
+    showToast('Upload error: ' + e.message, 'error');
+  }
+}
+
+// Reply
+function clearReply() {
+  replyData = null;
+  $('#reply-bar').classList.add('hidden');
+}
+
+function setReply(id, text) {
+  replyData = {id, text};
+  $('#reply-bar').classList.remove('hidden');
+  $('#reply-bar-sender').textContent = 'Replying to:';
+  $('#reply-bar-text').textContent = text;
+}
+
+$('#cancel-reply-btn').addEventListener('click', clearReply);
+
+// Reactions
+async function reactToMessage(id, emoji) {
+  const action = currentChat.type === 'channel' ? 'react_channel_message' : 'react_message';
+  const data = await apiCall(action, {message_id: id, emoji});
+  if (data.success) await loadMessages();
+}
+
+// Context menu (simplified)
+let contextMenuData = null;
+function showContextMenu(e, messageId, content, senderName, isMine) {
+  const menu = $('#context-menu');
+  contextMenuData = {id: messageId, content, senderName, isMine};
+  
+  // Position
+  const x = e.clientX || e.touches?.[0]?.clientX || 0;
+  const y = e.clientY || e.touches?.[0]?.clientY || 0;
+  menu.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 200)}px`;
+  menu.classList.remove('hidden');
+  
+  // Toggle delete visibility
+  $('#ctx-delete').style.display = isMine ? 'block' : 'none';
+  
   e.preventDefault();
-  dragCounter=0;
-  document.body.classList.remove('drag-active');
-  var files=e.dataTransfer.files;
-  if(files&&files.length)onFile(files[0]);
 }
-document.addEventListener('dragover',function(e){e.preventDefault();});
-document.addEventListener('dragenter',function(e){
-  dragCounter++;
-  document.body.classList.add('drag-active');
-});
-document.addEventListener('dragleave',function(e){
-  dragCounter--;
-  if(dragCounter<=0){dragCounter=0;document.body.classList.remove('drag-active');}
-});
-document.addEventListener('drop',ng_onDrop);
 
-// ── PASTE TO UPLOAD (A3) ───────────────────────────────────────────────────
-function ng_onPaste(e){
-  var items=e.clipboardData&&e.clipboardData.items;
-  if(!items)return;
-  for(var i=0;i<items.length;i++){
-    if(items[i].type.indexOf('image/')===0){
-      var file=items[i].getAsFile();
-      if(file){e.preventDefault();onFile(file);return;}
+function hideContextMenu() {
+  $('#context-menu').classList.add('hidden');
+  contextMenuData = null;
+}
+
+// Delete message
+async function deleteMessage() {
+  if (!contextMenuData || !contextMenuData.isMine) return;
+  
+  const action = currentChat.type === 'channel' ? 'delete_channel_message' : 'delete_message';
+  const data = await apiCall(action, {message_id: contextMenuData.id});
+  
+  if (data.success) {
+    showToast('Message deleted', 'info');
+    await loadMessages();
+  } else {
+    showToast(data.error || 'Delete failed', 'error');
+  }
+  hideContextMenu();
+}
+
+// Context menu actions
+$('#ctx-reply').addEventListener('click', () => {
+  if (!contextMenuData) return;
+  setReply(contextMenuData.id, contextMenuData.content);
+  hideContextMenu();
+});
+
+$('#ctx-copy').addEventListener('click', async () => {
+  if (!contextMenuData) return;
+  await navigator.clipboard.writeText(contextMenuData.content || '');
+  showToast('Copied to clipboard!', 'info');
+  hideContextMenu();
+});
+
+$('#ctx-delete').addEventListener('click', deleteMessage);
+
+// Emoji picker
+function initEmojiPicker() {
+  const picker = $('#emoji-picker');
+  const toggle = $('#emoji-btn');
+  
+  toggle.addEventListener('click', () => {
+    picker.classList.toggle('hidden');
+    if (!picker.classList.contains('hidden')) {
+      renderEmojiGrid();
+    }
+  });
+  
+  // Close when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!picker.contains(e.target) && !toggle.contains(e.target)) {
+      picker.classList.add('hidden');
+    }
+  });
+}
+
+function renderEmojiGrid() {
+  const grid = $('#emoji-grid');
+  const emojis = ['😊','😂','❤️','👍','🔥','😮','🎉','😢','👏','🙏','✅','💯','😍','🤔','👋','🎊','✨','💡','🤷‍♂️','🤦‍♀️'];
+  
+  grid.innerHTML = emojis.map(e => `<button class="emoji-btn" onclick="insertEmoji('${e}')">${e}</button>`).join('');
+}
+
+function insertEmoji(emoji) {
+  const input = $('#message-input');
+  const start = input.selectionStart;
+  const end = input.selectionEnd;
+  input.value = input.value.substring(0, start) + emoji + input.value.substring(end);
+  input.focus();
+  
+  const newPos = start + emoji.length;
+  input.setSelectionRange(newPos, newPos);
+}
+
+// Attach menu
+$('#attach-btn').addEventListener('click', toggleAttachMenu);
+function toggleAttachMenu() {
+  $('#attach-menu').classList.toggle('hidden');
+}
+
+$('#attach-image-btn').addEventListener('click', () => {
+  $('#file-input').accept = 'image/*,video/*';
+  $('#file-input').click();
+  $('#attach-menu').classList.add('hidden');
+});
+
+$('#attach-file-btn').addEventListener('click', () => {
+  $('#file-input').accept = '.pdf,.doc,.docx,.zip,.txt';
+  $('#file-input').click();
+  $('#attach-menu').classList.add('hidden');
+});
+
+$('#file-input').addEventListener('change', e => {
+  if (e.target.files.length > 0) {
+    onFile(e.target);
+  }
+});
+
+// Bottom sheets
+function initBottomSheets() {
+  $$('[data-sheet]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const sheetId = btn.getAttribute('data-sheet');
+      closeSheet(sheetId);
+    });
+  });
+  
+  $('#bottom-sheet-overlay').addEventListener('click', () => {
+    $$('.bottom-sheet:not(.hidden)').forEach(sheet => {
+      if (!sheet.classList.contains('hidden')) {
+        const sheetId = sheet.id;
+        closeSheet(sheetId);
+      }
+    });
+  });
+}
+
+function openSheet(sheetId) {
+  if (sheetId === 'profile-sheet') {
+    // Load profile data
+    $('#profile-name-display').textContent = currentUser?.display_name || '';
+    $('#profile-username-display').textContent = '@' + (currentUser?.username || '');
+    $('#profile-display-name').value = currentUser?.display_name || '';
+    
+    if (currentUser?.avatar_url) {
+      $('#profile-avatar-display').innerHTML = `<img src="${currentUser.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
     }
   }
+  
+  $('#bottom-sheet-overlay').classList.remove('hidden');
+  $(`#${sheetId}`).classList.remove('hidden');
 }
-document.addEventListener('paste',ng_onPaste);
 
-// ── DRAFT (B1) ─────────────────────────────────────────────────────────────
-function onDraftChange(){
-  if(draftDebounce)clearTimeout(draftDebounce);
-  draftDebounce=setTimeout(ng_saveDraft,400);
+function closeSheet(sheetId) {
+  $(`#${sheetId}`).classList.add('hidden');
+  $('#bottom-sheet-overlay').classList.add('hidden');
 }
-function ng_saveDraft(){
-  var key='ngd_'+chatKey();
-  var txt=g('msgIn').value;
-  if(!txt&&!replyD){ls_rm(key);return;}
-  ls_set(key,{txt:txt,replyId:replyD?replyD.id:null,replyD:replyD},86400000);
-}
-function ng_restoreDraft(){
-  var key='ngd_'+chatKey();
-  var d=ls_get(key);
-  if(!d){g('msgIn').value='';autoGrow(g('msgIn'));return;}
-  g('msgIn').value=d.txt||'';
-  autoGrow(g('msgIn'));
-  if(d.replyD){
-    replyD=d.replyD;
-    g('repStrip').style.display='flex';
-    g('repName').textContent=replyD.sender||'';
-    g('repTxt').innerHTML='Replying to <strong>'+escHtml(replyD.sender||'')+'</strong>';
+
+// Profile
+$('#profile-btn').addEventListener('click', () => openSheet('profile-sheet'));
+$('#save-profile-btn').addEventListener('click', saveProfile);
+$('#logout-btn').addEventListener('click', logout);
+
+async function saveProfile() {
+  const displayName = $('#profile-display-name').value.trim();
+  const bio = $('#profile-bio').value.trim();
+  
+  if (!displayName) {
+    showToast('Display name is required', 'error');
+    return;
+  }
+  
+  const data = await apiCall('update_profile', {display_name: displayName, bio});
+  
+  if (data.success) {
+    currentUser = {...currentUser, ...data.user};
+    saveSession(currentUser);
+    showToast('Profile updated!', 'success');
+    closeSheet('profile-sheet');
+  } else {
+    showToast(data.error || 'Failed to update profile', 'error');
   }
 }
-function ng_clearDraft(){
-  var key='ngd_'+chatKey();
-  ls_rm(key);
+
+// Logout
+function logout() {
+  currentUser = null;
+  clearSession();
+  showAuth();
+  currentChat = null;
+  currentChatId = null;
+  chats = {};
+  messages = {};
 }
 
-// ── SEARCH ────────────────────────────────────────────────────────────────
-var searchDebounce=null;
-function onSearch(val){
-  if(searchDebounce)clearTimeout(searchDebounce);
-  if(!val.trim()){g('srchRes').innerHTML='';return;}
-  searchDebounce=setTimeout(function(){doSearch(val.trim());},300);
-}
-function doSearch(q){
-  api('search_users',{query:q}).then(function(r){
-    if(!r||!r.success){g('srchRes').innerHTML='';return;}
-    var users=r.users||[];
-    var el=g('srchRes');
-    el.innerHTML='';
-    users.forEach(function(u){
-      var d=document.createElement('div');
-      d.className='srch-item';
-      d.innerHTML='<div class="sav">'+initials(u.display_name)+'</div>'
-        +'<div><div class="sname">'+escHtml(u.display_name)+'</div>'
-        +'<div class="sdesc">@'+escHtml(u.username)+'</div></div>';
-      d.onclick=function(){startDM(u);g('srchRes').innerHTML='';g('srchIn').value='';};
-      el.appendChild(d);
-    });
-    if(!users.length)el.innerHTML='<div style="color:var(--muted);padding:8px;font-size:13px">No users found</div>';
-  });
-}
-function startDM(user){
-  api('create_chat',{user_id:user.id}).then(function(r){
-    if(!r||!r.success){toast(r&&r.error||'Cannot start chat',true);return;}
-    var chat=r.chat;
-    chat.other_user_name=user.display_name;
-    curTab='dm';
-    g('tabDM').classList.add('act');
-    g('tabCH').classList.remove('act');
-    loadDMList().then(function(){openItem(chat,'dm');});
-  });
+// Create new chat
+$('#new-chat-btn').addEventListener('click', () => openSheet('new-chat-sheet'));
+
+async function createNewChat() {
+  const username = $('#new-chat-username').value.trim();
+  if (!username) {
+    showToast('Enter a username', 'error');
+    return;
+  }
+  
+  const data = await apiCall('create_chat', {is_group: false, peer_username: username});
+  
+  if (data.success) {
+    showToast('Chat created!', 'success');
+    closeSheet('new-chat-sheet');
+    await loadChats();
+    openChat(data.chat_id);
+  } else {
+    showToast(data.error || 'Failed to create chat', 'error');
+  }
 }
 
-// ── CHANNELS ──────────────────────────────────────────────────────────────
-function openChanPane(){g('chanPane').classList.add('show');}
-function closeChanPane(){g('chanPane').classList.remove('show');}
-function submitChanCreate(){
-  var name=g('chanName').value.trim();
-  var desc=g('chanDesc').value.trim();
-  var type=g('chanType').value;
-  if(!name){toast('Channel name required',true);return;}
-  api('create_channel',{name:name,description:desc,type:type}).then(function(r){
-    if(!r||!r.success){toast(r&&r.error||'Failed',true);return;}
-    closeChanPane();
-    g('chanName').value='';g('chanDesc').value='';
-    toast('Channel created!');
-    curTab='ch';
-    g('tabCH').classList.add('act');
-    g('tabDM').classList.remove('act');
-    loadChannelList();
-  });
-}
-function openMembersPane(){
-  if(!curChat||curChat.type!=='channel')return;
-  api('channel_members',{channel_id:curChat.id}).then(function(r){
-    var list=g('membersList');
-    list.innerHTML='';
-    if(!r||!r.success){list.innerHTML='<div style="color:var(--muted)">Failed to load</div>';return;}
-    var members=r.members||[];
-    members.forEach(function(m){
-      var row=document.createElement('div');
-      row.className='member-row';
-      row.innerHTML='<div class="mav">'+initials(m.display_name||m.username||'?')+'</div>'
-        +'<div class="mname">'+escHtml(m.display_name||m.username||'Unknown')+'</div>'
-        +'<div class="mrole">'+escHtml(m.role||'member')+'</div>';
-      list.appendChild(row);
-    });
-    // check membership
-    var isMember=members.some(function(m){return ME&&m.user_id===ME.id;});
-    g('joinLeaveBtn').textContent=isMember?'Leave':'Join';
-    g('membersPane').classList.add('show');
-  });
-}
-function closeMembersPane(){g('membersPane').classList.remove('show');}
-function toggleJoinLeave(){
-  if(!curChat||curChat.type!=='channel')return;
-  var btn=g('joinLeaveBtn');
-  var isLeave=btn.textContent==='Leave';
-  var action=isLeave?'leave_channel':'join_channel';
-  api(action,{channel_id:curChat.id}).then(function(r){
-    if(!r||!r.success){toast(r&&r.error||'Failed',true);return;}
-    toast(isLeave?'Left channel':'Joined channel!');
-    btn.textContent=isLeave?'Join':'Leave';
-    loadChannelList();
-  });
+$('#create-chat-btn').addEventListener('click', createNewChat);
+
+// Explore
+$('#explore-btn').addEventListener('click', () => openSheet('explore-sheet'));
+
+// Lightbox
+function openLightbox(src) {
+  const lb = $('#lightbox');
+  $('#lightbox-img').src = src;
+  $('#lightbox-img').classList.remove('hidden');
+  $('#lightbox-video').classList.add('hidden');
+  lb.classList.remove('hidden');
 }
 
-// ── PROFILE ───────────────────────────────────────────────────────────────
-function openProfPane(){
-  if(!ME)return;
-  g('profName').value=ME.display_name||'';
-  g('profBio').value=ME.bio||'';
-  g('profAvatar').value=ME.avatar_url||'';
-  g('profPane').classList.add('show');
-}
-function closeProfPane(){g('profPane').classList.remove('show');}
-function submitProfUpdate(){
-  var body={display_name:g('profName').value.trim(),bio:g('profBio').value.trim(),avatar_url:g('profAvatar').value.trim()};
-  api('update_profile',body).then(function(r){
-    if(!r||!r.success){toast(r&&r.error||'Update failed',true);return;}
-    ME=Object.assign(ME,body);
-    g('myName').textContent=ME.display_name;
-    g('myAv').textContent=initials(ME.display_name);
-    closeProfPane();
-    toast('Profile updated!');
-  });
-}
-
-// ── LIGHTBOX (A1) ─────────────────────────────────────────────────────────
-function ng_openLightbox(src,imgs){
-  lbImgs=imgs||[];
-  lbIdx=lbImgs.findIndex(function(i){return i.src===src;});
-  if(lbIdx<0){lbIdx=0;lbImgs=[{src:src}];}
-  ng_setLightboxImg();
-  g('LB').classList.add('show');
-}
-function ng_setLightboxImg(){
-  var img=lbImgs[lbIdx];
-  if(!img)return;
-  g('LB_IMG').src=img.src;
-  g('LB_CAP').textContent=(lbIdx+1)+' / '+lbImgs.length;
-}
-function ng_closeLightbox(){
-  g('LB').classList.remove('show');
-  g('LB_IMG').src='';
-}
-function ng_prevImg(){
-  if(lbImgs.length<2)return;
-  lbIdx=(lbIdx-1+lbImgs.length)%lbImgs.length;
-  ng_setLightboxImg();
-}
-function ng_nextImg(){
-  if(lbImgs.length<2)return;
-  lbIdx=(lbIdx+1)%lbImgs.length;
-  ng_setLightboxImg();
-}
-g('LB').addEventListener('click',function(e){if(e.target===g('LB'))ng_closeLightbox();});
-// keyboard
-document.addEventListener('keydown',function(e){
-  if(!g('LB').classList.contains('show'))return;
-  if(e.key==='Escape')ng_closeLightbox();
-  if(e.key==='ArrowLeft')ng_prevImg();
-  if(e.key==='ArrowRight')ng_nextImg();
+$('#lightbox-close').addEventListener('click', () => {
+  $('#lightbox').classList.add('hidden');
 });
 
-// ── MISC UI ───────────────────────────────────────────────────────────────
-function autoGrow(el){
-  el.style.height='auto';
-  el.style.height=Math.min(el.scrollHeight,140)+'px';
-}
-function onMsgKey(e){
-  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}
-}
-function escHtml(s){
-  if(!s)return'';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function isImgUrl(url){
-  if(!url)return false;
-  return /\.(jpg|jpeg|png|gif|webp|svg|bmp)(\?|$)/i.test(url)||url.startsWith('data:image');
+// Utility functions
+function fmtTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
 }
 
-// ── INIT ───────────────────────────────────────────────────────────────────
-tryAutoLogin();
+function fmtDate(ts) {
+  if (!ts) return '';
+  const d = new Date(ts), now = new Date();
+  if (d.toDateString() === now.toDateString()) return 'Today';
+  const y = new Date(now); y.setDate(now.getDate()-1);
+  if (d.toDateString() === y.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString([], {month: 'short', day: 'numeric'});
+}
+
+function avatarColor(name='') {
+  const colors = ['av-blue','av-violet','av-teal','av-rose','av-orange','av-green','av-indigo','av-pink','av-amber','av-cyan'];
+  let h = 0; for (const c of name) h = (h*31 + c.charCodeAt(0)) & 0xFFFF;
+  return colors[h % colors.length];
+}
+
+function initials(name='') {
+  return name.split(/\s+/).slice(0,2).map(w => w[0]||'').join('').toUpperCase() || '?';
+}
+
+function escHtml(s='') {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function formatFileSize(url) { // Can't actually get file size without HEAD request
+  return url ? '📎' : '';
+}
 </script>
 </body>
 </html>
