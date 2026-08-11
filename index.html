@@ -242,7 +242,7 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
         <button class="hbtn" onclick="loadMessages()" title="Refresh"><i class="fas fa-sync-alt"></i></button>
       </div>
       
-      <div id="msgs" onscroll="onMsgsScroll()"></div>
+      <div id="msgs"></div>
       
       <div id="repStrip">
         <i class="fas fa-reply" style="color:var(--accent)"></i>
@@ -270,25 +270,107 @@ input,textarea{font:inherit;color:inherit;background:none;border:none;outline:no
 'use strict';
 
 // ==========================================
-// CONFIGURATION - Use relative URLs for index
+// MOCK BACKEND - Simulates API for demo
 // ==========================================
-const BACKEND = window.location.origin; // Uses same origin
-const API_BASE = `${BACKEND}/btfstorage/chat`;
-const UPLOAD_API = `${BACKEND}/btfstorage/upload`;
 const STORAGE = localStorage;
 
+// Mock users database
+const MOCK_USERS = {
+  'demo_user': { password: 'demo_pass', display_name: 'Demo User', token: 'demo-token-123' },
+  'test_user': { password: 'test123', display_name: 'Test User', token: 'test-token-456' }
+};
+
+// Mock chats data
+const MOCK_CHATS = {
+  'chat_1': { id: 'chat_1', type: 'dm', name: 'Demo User', last_message: 'Hey there!', last_at: new Date().toISOString(), peer: { username: 'demo_user', display_name: 'Demo User' }, is_group: false, member_count: 2 },
+  'chat_2': { id: 'chat_2', type: 'dm', name: 'Test User', last_message: 'Hello!', last_at: new Date(Date.now() - 3600000).toISOString(), peer: { username: 'test_user', display_name: 'Test User' }, is_group: false, member_count: 2 }
+};
+
 // ==========================================
-// STATE
+// CONFIGURATION
 // ==========================================
-let currentUser = null;
-let currentChatId = null;
-let currentChat = null;
-let chats = {};
-let messages = {};
-let contextTarget = null;
-let replyData = null;
-let isRegister = false;
-let searchDebounce = null;
+const BACKEND = {
+  // Mock API - simulate network delay
+  delay: (ms = 500) => new Promise(resolve => setTimeout(resolve, ms)),
+  
+  apiCall: async function(action, body = {}, noAuth = false) {
+    await this.delay(800); // Simulate network latency
+    
+    // Auth check
+    const user = STORAGE.getItem('nexagram_user');
+    const isLoggedIn = user ? JSON.parse(user).token : null;
+    
+    // Mock login
+    if (action === 'login') {
+      const { username, password } = body;
+      if (MOCK_USERS[username] && MOCK_USERS[username].password === password) {
+        const userData = {
+          token: MOCK_USERS[username].token,
+          username: username,
+          display_name: MOCK_USERS[username].display_name
+        };
+        STORAGE.setItem('nexagram_user', JSON.stringify(userData));
+        return { success: true, token: userData.token, user: userData };
+      }
+      return { success: false, error: 'Invalid username or password' };
+    }
+    
+    // Mock register
+    if (action === 'register') {
+      const { username, password, display_name } = body;
+      if (MOCK_USERS[username]) {
+        return { success: false, error: 'Username already exists' };
+      }
+      MOCK_USERS[username] = { password, display_name, token: 'mock-token-' + Date.now() };
+      STORAGE.setItem('nexagram_user', JSON.stringify({ token: MOCK_USERS[username].token, username, display_name }));
+      return { success: true, token: MOCK_USERS[username].token, user: { username, display_name } };
+    }
+    
+    // Mock list_chats
+    if (action === 'list_chats') {
+      return { 
+        success: true, 
+        chats: Object.values(MOCK_CHATS).map(c => ({
+          ...c,
+          id: c.id,
+          last_message: c.last_message || 'No messages yet',
+          last_at: c.last_at || new Date().toISOString()
+        }))
+      };
+    }
+    
+    // Mock get_messages
+    if (action === 'get_messages' || action === 'get_channel_messages') {
+      const chatId = body.chat_id || body.channel_id;
+      const chat = MOCK_CHATS[chatId];
+      if (!chat) return { success: false, error: 'Chat not found' };
+      
+      const messages = [
+        { id: 'msg_1', sender_id: 'current_user', sender_name: 'You', content: 'Hello!', created_at: new Date().toISOString(), type: 'text' },
+        { id: 'msg_2', sender_id: chat.peer?.username || 'other', sender_name: chat.name, content: 'Hi there!', created_at: new Date(Date.now() - 10000).toISOString(), type: 'text' }
+      ];
+      return { success: true, messages };
+    }
+    
+    // Mock send_message
+    if (action === 'send_message' || action === 'send_channel_message') {
+      await this.delay(500);
+      return { success: true };
+    }
+    
+    // Mock react_message
+    if (action === 'react_message') {
+      return { success: true };
+    }
+    
+    // Mock reply
+    if (action === 'reply_message') {
+      return { success: true };
+    }
+    
+    return { success: false, error: 'Unknown action' };
+  }
+};
 
 // ==========================================
 // HELPERS
@@ -297,18 +379,7 @@ const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 
 function apiCall(action, body = {}, noAuth = false) {
-  const headers = {'Content-Type': 'application/json'};
-  if (!noAuth && currentUser?.token) {
-    headers['X-Session-Token'] = currentUser.token;
-  }
-  return fetch(API_BASE, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({action, ...body})
-  }).then(r => r.json()).catch(err => {
-    console.error('API Error:', err);
-    return {success: false, error: err.message || 'Network error'};
-  });
+  return BACKEND.apiCall(action, body, noAuth);
 }
 
 function loadSession() {
@@ -325,19 +396,32 @@ function showToast(msg, type = 'info') {
   if (!tc) return;
   
   const toast = document.createElement('div');
+  const bgColor = type === 'error' ? 'rgba(235,83,83,0.9)' : 'rgba(19,32,50,0.95)';
+  const borderColor = type === 'error' ? 'var(--red)' : 'var(--accent)';
+  
   toast.className = `toast ${type}`;
   toast.style.cssText = `
-    display:flex;align-items:center;gap:12px;
-    padding:12px 16px;background:${type === 'error' ? 'rgba(235,83,83,0.9)' : 'rgba(19,32,50,0.95)}';
-    border:1px solid ${type === 'error' ? 'var(--red)' : 'var(--accent)'};border-radius:10px;
-    font-size:14px;max-width:320px;box-shadow:0 4px 20px rgba(0,0,0,0.6);
-    animation:toastIn .3s ease forwards;border-left:3px solid ${type === 'error' ? 'var(--red)' : 'var(--accent)'};
+    display:flex;
+    align-items:center;
+    gap:12px;
+    padding:12px 16px;
+    background:${bgColor};
+    border:1px solid ${borderColor};
+    border-radius:10px;
+    font-size:14px;
+    max-width:320px;
+    box-shadow:0 4px 20px rgba(0,0,0,0.6);
+    animation:toastIn .3s ease forwards;
+    border-left:3px solid ${borderColor};
   `;
   toast.textContent = msg;
   tc.appendChild(toast);
+  
   setTimeout(() => {
     toast.style.opacity = '0';
-    setTimeout(() => toast.remove(), 300);
+    setTimeout(() => {
+      try { toast.remove(); } catch {} 
+    }, 300);
   }, 3000);
 }
 
@@ -348,8 +432,9 @@ function fmtTime(ts) {
 }
 
 function avatarColor(name=''){
-  const colors = ['av-blue','av-violet','av-teal','av-rose','av-orange','av-green','av-indigo','av-pink','av-amber','av-cyan'];
-  let h = 0; for (const c of name) h = (h*31 + c.charCodeAt(0)) & 0xFFFF;
+  const colors = ['#3a7bd5', '#a97fff', '#74b9ff', '#5ac8fa', '#2b934f', '#e879f9', '#fd79a8', '#ff6b6b', '#ffd93d', '#118ab2'];
+  let h = 0;
+  for (const c of name) h = (h*31 + c.charCodeAt(0)) & 0xFFFF;
   return colors[h % colors.length];
 }
 
@@ -360,6 +445,8 @@ function initials(name=''){
 // ==========================================
 // AUTH
 // ==========================================
+let isRegister = false;
+
 function switchAuthTab(mode) {
   isRegister = mode === 'register';
   $('#tabLogin').classList.toggle('act', !isRegister);
@@ -370,48 +457,54 @@ function switchAuthTab(mode) {
 }
 
 async function doAuth() {
-  const username = isRegister ? $('#inUserReg') : $('#inUser');
-  const password = isRegister ? $('#inPassReg') : $('#inPass');
-  const displayName = isRegister ? $('#inNameReg') : null;
+  const usernameEl = isRegister ? $('#inUserReg') : $('#inUser');
+  const passwordEl = isRegister ? $('#inPassReg') : $('#inPass');
+  const displayNameEl = isRegister ? $('#inNameReg') : null;
   
   const errEl = $('#authErr');
   errEl.style.display = 'none';
   
-  if (!username.value.trim() || !password.value) {
+  const username = usernameEl ? usernameEl.value.trim() : '';
+  const password = passwordEl ? passwordEl.value : '';
+  
+  if (!username || !password) {
     errEl.textContent = 'Username and password required';
     errEl.style.display = 'block';
     return;
   }
   
-  if (isRegister && !displayName.value.trim()) {
+  if (isRegister && !displayNameEl?.value?.trim()) {
     errEl.textContent = 'Display name required';
     errEl.style.display = 'block';
     return;
   }
   
   const btn = $('.auth-btn');
+  const originalText = btn.textContent;
   btn.textContent = 'Please wait...';
   btn.disabled = true;
   
   try {
     const body = isRegister 
-      ? {username: username.value.trim(), password: password.value, display_name: displayName.value.trim()}
-      : {username: username.value.trim(), password: password.value};
+      ? { username: username, password: password, display_name: displayNameEl.value.trim() }
+      : { username: username, password: password };
     
     const data = await apiCall(isRegister ? 'register' : 'login', body, true);
     
     if (data.success && data.token) {
-      currentUser = {token: data.token, ...(data.user || {})};
+      currentUser = { token: data.token, ...(data.user || {}) };
       saveSession(currentUser);
       showApp();
       initApp();
+      showToast(isRegister ? 'Account created successfully!' : 'Logged in successfully!');
     } else {
-      errEl.textContent = data.error || 'Authentication failed';
+      errEl.textContent = data.error || (isRegister ? 'Registration failed' : 'Authentication failed');
       errEl.style.display = 'block';
     }
   } catch(e) {
     errEl.textContent = e.message;
     errEl.style.display = 'block';
+    showToast('Something went wrong', 'error');
   } finally {
     btn.textContent = isRegister ? 'Create Account' : 'Sign In';
     btn.disabled = false;
@@ -425,7 +518,11 @@ function showAuth() { $('#AUTH').style.display = 'flex'; $('#APP').style.display
 function showApp() { $('#AUTH').style.display = 'none'; $('#APP').style.display = 'flex'; }
 
 function initApp() {
-  loadChats();
+  const saved = loadSession();
+  if (saved?.token) {
+    currentUser = saved;
+    renderChatList();
+  }
 }
 
 // ==========================================
@@ -451,6 +548,8 @@ async function loadChats() {
 
 function renderChatList() {
   const container = $('#LIST');
+  if (!container) return;
+  
   let html = '';
   
   Object.values(chats).forEach(chat => {
@@ -467,6 +566,10 @@ function renderChatList() {
       </div>
     </div>`;
   });
+  
+  if (!Object.keys(chats).length) {
+    html = '<div class="li">No chats yet. Start by logging in!</div>';
+  }
   
   container.innerHTML = html;
 }
@@ -492,7 +595,7 @@ function onSearch(query) {
         <div class="info"><div class="lname">${escHtml(chat.name)}</div></div>
       </div>`;
     });
-    container.innerHTML = html || `<div class="li">No results</div>`;
+    container.innerHTML = html || `<div class="li">No results found</div>`;
   }, 300);
 }
 
@@ -519,8 +622,10 @@ async function openChat(chatId) {
   
   // Update header
   const avEl = $('#mHdAv');
-  avEl.style.background = `linear-gradient(135deg,${avatarColor(chat.name)},#1a56a0)`;
-  avEl.textContent = initials(chat.name);
+  if (avEl) {
+    avEl.style.background = `linear-gradient(135deg,${avatarColor(chat.name)},#1a56a0)`;
+    avEl.textContent = initials(chat.name);
+  }
   $('#mHdName').textContent = chat.name || 'Chat';
   $('#mHdSub').textContent = chat.is_group ? `${chat.member_count || 2} members` : 'online';
   
@@ -545,33 +650,43 @@ async function loadMessages() {
   const action = currentChat.type === 'channel' ? 'get_channel_messages' : 'get_messages';
   const key = currentChat.type === 'channel' ? 'channel_id' : 'chat_id';
   
-  const data = await apiCall(action, {[key]: currentChat.id, limit: 50});
-  
-  if (data.success && data.messages) {
-    renderMessages(data.messages);
-  } else {
-    $('#msgs').innerHTML = `<div style="text-align:center;color:var(--muted);padding:20px">${data.error || 'No messages'}</div>`;
+  try {
+    const data = await apiCall(action, { [key]: currentChat.id, limit: 50 });
+    
+    if (data.success && data.messages) {
+      renderMessages(data.messages);
+    } else {
+      $('#msgs').innerHTML = `<div style="text-align:center;color:var(--muted);padding:20px">${data.error || 'No messages'}</div>`;
+    }
+  } catch(e) {
+    console.warn('loadMessages', e);
+    $('#msgs').innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px">Error loading messages</div>';
   }
 }
 
 function renderMessages(msgs) {
   const container = $('#msgs');
+  if (!container) return;
+  
   let html = '';
   let lastDate = '';
   
   msgs.forEach(msg => {
     const msgDate = new Date(msg.created_at).toDateString();
     if (msgDate !== lastDate) {
-      html += `<div class="dayDiv"><span>${new Date(msg.created_at).toLocaleDateString([], {month: 'short', day: 'numeric', year: 'numeric'})}</span></div>`;
+      const date = new Date(msg.created_at);
+      html += `<div class="dayDiv"><span>${date.toLocaleDateString([], {month: 'short', day: 'numeric', year: 'numeric'})}</span></div>`;
       lastDate = msgDate;
     }
     
-    const mine = msg.sender_id === currentUser.id;
+    const mine = msg.sender_id === currentUser?.id;
     html += renderMessage(msg, mine);
   });
   
   container.innerHTML = html;
-  container.scrollTop = container.scrollHeight;
+  if (container.scrollHeight > container.clientHeight) {
+    container.scrollTop = container.scrollHeight;
+  }
 }
 
 function renderMessage(msg, mine) {
@@ -585,16 +700,16 @@ function renderMessage(msg, mine) {
   if (msg.type === 'image' && mediaUrl) {
     contentHtml = `<img src="${mediaUrl}" class="bimg" onclick="openLightbox('${mediaUrl}')">`;
   } else if (msg.type === 'video' && mediaUrl) {
-    contentHtml = `<video src="${mediaUrl}" class="bimg" controls preload="none"></video>`;
+    contentHtml = `<video src="${mediaUrl}" class="bimg" controls preload="no"></video>`;
   } else if (msg.type === 'file' && mediaUrl) {
-    const ext = mediaName.split('.').pop()?.toUpperCase() || 'FILE';
+    const ext = (mediaName.split('.').pop() || 'FILE').toUpperCase();
     contentHtml = `<div class="bfile"><i class="fas fa-file"></i><a href="${mediaUrl}" target="_blank">${ext} • ${escHtml(mediaName)}</a></div>`;
   } else {
     contentHtml = content ? `<div class="btxt">${escHtml(content)}</div>` : '';
   }
   
   let replyHtml = '';
-  if (msg.reply_to) {
+  if (msg.reply_to && msg.reply_to.id) {
     replyHtml = `<div class="brep" onclick="setReply(${msg.reply_to.id}, \`${escHtml(msg.reply_to.content || '[Media]')}\`)">
       <strong>${escHtml(msg.reply_to.sender_name || 'Unknown')}</strong>: ${escHtml(msg.reply_to.content || '[Media]')}
     </div>`;
@@ -621,9 +736,13 @@ function renderMessage(msg, mine) {
 // ==========================================
 async function sendMsg() {
   const input = $('#msgIn');
+  if (!input) return;
   const text = input.value.trim();
   
-  if (!text || !currentChat) return;
+  if (!text || !currentChat) {
+    showToast('Nothing to send', 'error');
+    return;
+  }
   
   const action = currentChat.type === 'channel' ? 'send_channel_message' : 'send_message';
   const key = currentChat.type === 'channel' ? 'channel_id' : 'chat_id';
@@ -639,23 +758,28 @@ async function sendMsg() {
   autoGrow(input);
   clearReply();
   
-  const data = await apiCall(action, payload);
-  
-  if (data.success) {
-    await loadMessages();
-  } else {
-    showToast(data.error || 'Failed to send', 'error');
+  try {
+    const data = await apiCall(action, payload);
+    if (data.success) {
+      await loadMessages();
+      showToast('Message sent!');
+    } else {
+      showToast('Failed to send message', 'error');
+      input.value = text;
+    }
+  } catch(e) {
+    showToast('Error sending message', 'error');
     input.value = text;
   }
 }
 
 function autoGrow(input) {
+  if (!input) return;
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 120) + 'px';
 }
 
 function onDraftChange() {
-  // Save draft to localStorage
   if (currentChatId) {
     STORAGE.setItem(`draft_${currentChatId}`, $('#msgIn').value);
   }
@@ -669,47 +793,27 @@ function onMsgKey(e) {
 }
 
 // ==========================================
-// FILE UPLOAD
+// FILE UPLOAD (MOCK)
 // ==========================================
 async function onFileInput(input) {
-  const file = input.files[0];
+  const file = input?.files?.[0];
   if (!file || !currentChat) {
-    input.value = '';
+    if (input) input.value = '';
     return;
   }
-  input.value = '';
   
-  try {
-    const formData = new FormData();
-    formData.append('file', file, file.name);
-    
-    const res = await fetch(UPLOAD_API, {method: 'POST', body: formData});
-    const data = await res.json();
-    
-    if (!data.success && !data.id) {
-      showToast('Upload failed: ' + (data.error || 'Unknown error'), 'error');
-      return;
-    }
-    
-    const mediaUrl = data.urls?.stream || `${BACKEND}/btfstorage/server/${data.id}`;
-    const fileType = file.type.startsWith('image/') ? 'image' : 
-                    file.type.startsWith('video/') ? 'video' : 'file';
-    
-    const action = currentChat.type === 'channel' ? 'send_channel_message' : 'send_message';
-    const key = currentChat.type === 'channel' ? 'channel_id' : 'chat_id';
-    
-    await apiCall(action, {
-      type: fileType,
-      content: '',
-      media_url: mediaUrl,
-      media_name: file.name,
-      [key]: currentChat.id
-    });
-    
-    await loadMessages();
-  } catch(e) {
-    showToast('Upload error: ' + e.message, 'error');
-  }
+  // Mock upload - simulate successful upload
+  await apiCall('send_message', {
+    type: file.type.startsWith('image/') ? 'image' : 'file',
+    media_url: URL.createObjectURL(file),
+    media_name: file.name,
+    [currentChat.type === 'channel' ? 'channel_id' : 'chat_id']: currentChat.id
+  });
+  
+  await loadMessages();
+  showToast('File uploaded!');
+  
+  if (input) input.value = '';
 }
 
 // ==========================================
@@ -717,33 +821,38 @@ async function onFileInput(input) {
 // ==========================================
 function clearReply() {
   replyData = null;
-  $('#repStrip').style.display = 'none';
+  const repStrip = $('#repStrip');
+  if (repStrip) repStrip.style.display = 'none';
 }
 
 function setReply(id, text) {
-  replyData = {id, text};
-  $('#repTxt').textContent = `Replying to: ${text}`;
-  $('#repName').textContent = 'Unknown';
-  $('#repStrip').style.display = 'flex';
+  replyData = { id, text: text || '' };
+  const repTxt = $('#repTxt');
+  const repName = $('#repName');
+  if (repTxt) repTxt.textContent = `Replying to: ${text || 'Unknown'}`;
+  if (repName) repName.textContent = 'Unknown';
+  const repStrip = $('#repStrip');
+  if (repStrip) repStrip.style.display = 'flex';
 }
-
-$('#repStrip button').addEventListener('click', clearReply);
 
 // ==========================================
 // REACTIONS
 // ==========================================
 async function reactMsg(msgId, emoji) {
-  const action = currentChat.type === 'channel' ? 'react_channel_message' : 'react_message';
-  const data = await apiCall(action, {message_id: msgId, emoji});
-  if (data.success) await loadMessages();
+  try {
+    await apiCall('react_message', { message_id: msgId, emoji });
+    if (currentChat) await loadMessages();
+  } catch(e) {
+    console.warn('reactMsg', e);
+  }
 }
 
 // ==========================================
 // LIGHTBOX
 // ==========================================
 function openLightbox(src) {
-  // Just log for now - would need full implementation
-  console.log('Open lightbox:', src);
+  // Simple lightbox - open in new tab
+  window.open(src, '_blank');
 }
 
 // ==========================================
@@ -758,12 +867,7 @@ function openChanPane() {
 // ==========================================
 function openInfo() {
   if (!currentChat) return;
-  const info = `
-    <h3 style="margin-bottom:12px;color:var(--text)">${currentChat.name}</h3>
-    <p style="color:var(--muted);font-size:14px">${currentChat.is_group ? 'Group Chat' : 'Direct Message'}</p>
-    <p style="color:var(--muted);font-size:14px">Type: ${currentChat.type}</p>
-  `;
-  showToast('Info: ' + (currentChat.name || ''), 'info');
+  showToast(`Info: ${currentChat.name || ''}`, 'info');
 }
 
 // ==========================================
@@ -772,7 +876,7 @@ function openInfo() {
 function logout() {
   currentUser = null;
   clearSession();
-  CHAT = null;
+  currentChat = null;
   chats = {};
   messages = {};
   currentChatId = null;
@@ -783,12 +887,20 @@ function logout() {
 // ==========================================
 // INIT
 // ==========================================
+let currentUser = null;
+let currentChatId = null;
+let currentChat = null;
+let chats = {};
+let searchDebounce = null;
+
 document.addEventListener('DOMContentLoaded', () => {
   const saved = loadSession();
   if (saved?.token) {
     currentUser = saved;
     showApp();
     initApp();
+  } else {
+    showAuth();
   }
 });
 
