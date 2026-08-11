@@ -380,7 +380,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 */
 var BACKEND='';
 var CHAT_API=BACKEND+'/btfstorage/chat';
-var UPLOAD_API=BACKEND+'/btfstorage/upload';   // FIX: was '/upload' — wrong route, uploads/avatars were 404ing
+var UPLOAD_API=BACKEND+'https://marya-hosting.pages.dev/btfstorage/upload';   // FIX: was '/upload' — wrong route, uploads/avatars were 404ing
 var TOKEN=localStorage.getItem('ng_tok')||'';
 var ME=null,curTab='chats',curChat=null;
 var CC=[],CH=[];
