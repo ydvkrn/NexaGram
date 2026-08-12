@@ -372,13 +372,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <script>
 'use strict';
 /* ── BACKEND ──────────────────────────────────────────────────────────
-   Same-origin by default: index.html + /functions/btfstorage/*.js live
-   in ONE Cloudflare Pages project/repo, so requests just hit relative
-   paths on the same domain — no CORS hop, no extra DNS/TLS round trip.
-   If you ever split frontend/backend across two different domains again,
-   set BACKEND to that full https:// URL instead of ''.
+   This site (index.html) and the backend (chat.js/upload.js, with the
+   D1 + KV bindings) are TWO SEPARATE Cloudflare Pages projects/repos —
+   so this must be the backend's full https:// URL, not '' (relative).
+   Cross-origin is fine here since chat.js/upload.js already send
+   Access-Control-Allow-Origin: '*'.
 */
-var BACKEND='';
+var BACKEND='https://marya-hosting.pages.dev';
 var CHAT_API=BACKEND+'/btfstorage/chat';
 var UPLOAD_API=BACKEND+'/btfstorage/upload';   // FIX: was '/upload' — wrong route, uploads/avatars were 404ing
 var TOKEN=localStorage.getItem('ng_tok')||'';
