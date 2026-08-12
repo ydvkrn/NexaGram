@@ -553,12 +553,14 @@ async function openChannel(id){
 }
 function showChat(){
   g('VC').classList.add('open');
+  lastMsgsFingerprint=null;
   document.querySelectorAll('.li').forEach(function(el){el.classList.toggle('act',el.dataset.k===(curChat.type==='chat'?'c':'ch')+curChat.id);});
   loadMessages();startPoll();
 }
 window.closeChat=function(){g('VC').classList.remove('open');clearInterval(pollT);};
 
 /* MESSAGES */
+var lastMsgsFingerprint=null;
 async function loadMessages(){
   if(!curChat||!ME)return;
   var chatSnapshot=curChat;
@@ -568,7 +570,14 @@ async function loadMessages(){
   var r=await api(action,body);
   if(!r||!r.success)return;
   if(curChat!==chatSnapshot)return; // user switched chats while this request was in flight
-  renderMsgs(r.messages||[]);
+  var msgs=r.messages||[];
+  // Cheap fingerprint: if nothing actually changed since last poll, skip the
+  // re-render entirely — this is what was causing the "blink" on every poll
+  // tick (innerHTML was rebuilt every 1.5s even with zero new messages).
+  var fp=msgs.map(function(m){return m.id+':'+(m.content||'')+':'+(m.reactions||[]).map(function(x){return x.emoji+x.count;}).join(',');}).join('|');
+  if(fp===lastMsgsFingerprint)return;
+  lastMsgsFingerprint=fp;
+  renderMsgs(msgs);
 }
 
 function renderMsgs(msgs){
@@ -661,13 +670,30 @@ async function sendMsg(){
 
   if(r&&r.success){
     delete pendingMsgs[tmpId];
-    if(curChat===chatSnapshot)loadMessages();
+    var confirmed={
+      id:r.message_id,sender_id:ME.id,sender_name:ME.display_name,sender_avatar:ME.avatar_url,
+      type:'text',content:text,created_at:r.created_at||Date.now(),
+      reply_to:usedReply?{id:usedReply.id,sender_name:usedReply.sender_name,content:usedReply.content}:null,
+      reactions:[]
+    };
+    if(curChat===chatSnapshot)swapOptimistic(tmpId,confirmed);
     loadList();
   }else{
     tmp._pending=false;tmp._failed=true;
     if(curChat===chatSnapshot)updateOptimistic(tmp);
     toast((r&&r.error)||'Message not sent — tap it to retry','error');
   }
+}
+
+/* Swap the temp bubble's DOM node for the confirmed one, in place —
+   no full re-render, so nothing else on screen flickers/repaints. */
+function swapOptimistic(tmpId,confirmed){
+  var el=g('msgs').querySelector('[data-id="'+tmpId+'"]');
+  if(!el){return;} // chat was refreshed/reopened in the meantime — nothing to swap
+  var showName=false; // own messages never show the name label
+  var repl=document.createElement('div');repl.innerHTML=mkBub(confirmed,true,false,showName);
+  el.replaceWith(repl.firstElementChild);
+  attachBubEvts();
 }
 
 function appendOptimistic(m){
@@ -724,14 +750,7 @@ async function onFile(input){
   }
 
   try{
-    var fd=new FormData();fd.append('file',file,file.name);
-    var result=await new Promise(function(res,rej){
-      var xhr=new XMLHttpRequest();
-      xhr.upload.addEventListener('progress',function(e){if(e.lengthComputable)setPct(Math.round(e.loaded/e.total*100));});
-      xhr.onload=function(){try{res(JSON.parse(xhr.responseText));}catch(e){rej(new Error('Invalid response ('+xhr.status+')'));}};
-      xhr.onerror=function(){rej(new Error('Network error during upload'));};
-      xhr.open('POST',UPLOAD_API);xhr.send(fd);
-    });
+    var result=await uploadToBackend(file,setPct);
     var rowEl=document.getElementById('row_'+tid);if(rowEl)rowEl.remove();
     if(!result||!result.success){toast('Upload failed: '+(result&&result.error||'unknown'),'error');return;}
     var mediaUrl=(result.urls&&result.urls.stream)?result.urls.stream:'';
@@ -749,15 +768,36 @@ async function onFile(input){
   }
 }
 
+/* Shared uploader — matches the current upload.js protocol: a single
+   multipart/form-data POST with field name "file". The server does its
+   own chunking/multi-bot/multi-KV distribution internally, so the
+   client just sends the whole file in one request and gets progress
+   via XHR's upload.progress event. */
+function uploadToBackend(file,onProgress){
+  return new Promise(function(resolve,reject){
+    var fd=new FormData();fd.append('file',file,file.name);
+    var xhr=new XMLHttpRequest();
+    xhr.open('POST',UPLOAD_API);
+    xhr.upload.addEventListener('progress',function(e){
+      if(e.lengthComputable&&onProgress)onProgress(Math.round(e.loaded/e.total*100));
+    });
+    xhr.onload=function(){
+      var d;try{d=JSON.parse(xhr.responseText);}catch(e){reject(new Error('Invalid response ('+xhr.status+')'));return;}
+      if(!d||d.success===false){reject(new Error((d&&d.error)||('Server HTTP '+xhr.status)));return;}
+      resolve(d);
+    };
+    xhr.onerror=function(){reject(new Error('Network error during upload'));};
+    xhr.send(fd);
+  });
+}
+
 /* AVATAR UPLOAD */
 async function uploadAv(input){
   var file=input.files[0];if(!file)return;
   toast('Uploading…','info');
-  var fd=new FormData();fd.append('file',file,file.name);
   try{
-    var r=await fetch(UPLOAD_API,{method:'POST',body:fd});
-    var d=await r.json();
-    if(!d.success&&!d.id){toast('Upload failed: '+(d.error||'unknown'),'error');return;}
+    var d=await uploadToBackend(file,null);
+    if(!d||!d.success){toast('Upload failed: '+((d&&d.error)||'unknown'),'error');return;}
     var url=(d.urls&&d.urls.stream)?d.urls.stream:(BACKEND+'/btfstorage/server/'+(d.id||'')+(file.name.includes('.')?file.name.slice(file.name.lastIndexOf('.')):''));
     pendAv=url;
     var big=g('profAv');
