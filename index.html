@@ -40,7 +40,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 #APP{display:none;position:fixed;inset:0;padding-top:var(--safe-t)}
 #APP.show{display:block}
 
-/* CONN BANNER — sirf real disconnect pe dikhega, page load pe nahi */
+/* CONN BANNER */
 #CONN{position:fixed;top:var(--safe-t);left:0;right:0;z-index:998;background:var(--red);color:#fff;font-size:.72rem;font-weight:600;text-align:center;padding:.35rem;transform:translateY(-100%);transition:transform .25s}
 #CONN.show{transform:translateY(0)}
 
@@ -121,13 +121,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .btxt{font-size:.88rem;line-height:1.5;white-space:pre-wrap}
 .btime{font-size:.6rem;color:rgba(255,255,255,.38);display:flex;justify-content:flex-end;align-items:center;gap:.25rem;margin-top:.25rem}
 .btime i{font-size:.62rem}
-.retry-btn{color:var(--red);cursor:pointer;font-weight:700;font-size:.6rem;text-decoration:underline;background:none;border:none;padding:0;font-family:inherit}
+.btime .retry{color:var(--red);cursor:pointer;font-weight:700;text-decoration:underline}
 .brxns{display:flex;flex-wrap:wrap;gap:.2rem;margin-top:.32rem}
 .rxp{display:inline-flex;align-items:center;gap:.18rem;background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:.15rem .42rem;font-size:.78rem;cursor:pointer;transition:all .12s;user-select:none}
 .rxp:active,.rxp.mine{background:var(--accentD);border-color:var(--accent)}
 .rxc{font-size:.65rem;color:var(--muted2);font-weight:600}
 
-/* Upload progress bubble */
+/* Upload pending bubble */
 .upend{width:220px;min-height:100px;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:.3rem;background:rgba(255,255,255,.05);position:relative}
 .ucirc-wrap{position:relative;width:54px;height:54px;flex-shrink:0}
 .ucirc-bg{fill:none;stroke:rgba(255,255,255,.18);stroke-width:4}
@@ -163,7 +163,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .ee{font-size:1.3rem;cursor:pointer;padding:.2rem;border-radius:8px;transition:background .1s;user-select:none}
 .ee:hover{background:var(--bg3)}
 
-/* CTX MENU */
+/* CTX */
 .ctx{position:fixed;z-index:800;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:.35rem;min-width:178px;box-shadow:0 12px 40px rgba(0,0,0,.7);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s}
 .ctx.show{opacity:1;visibility:visible;pointer-events:all}
 .cxrxns{display:flex;gap:.25rem;padding:.4rem .5rem;border-bottom:1px solid var(--border)}
@@ -218,7 +218,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </head>
 <body>
 
-<!-- Connection lost banner — hidden by default, shows only on real disconnect after login -->
 <div id="CONN">Connection lost — retrying…</div>
 
 <div id="AUTH">
@@ -295,7 +294,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   </div>
 </div>
 
-<!-- Context menu -->
 <div class="ctx" id="ctx">
   <div class="cxrxns">
     <span class="cxr" onclick="doReact('👍')">👍</span><span class="cxr" onclick="doReact('❤️')">❤️</span>
@@ -373,758 +371,559 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 <script>
 'use strict';
-
-/* ════════════════════════════════════════════════════════════════
-   BACKEND CONFIG
-   ─────────────────────────────────────────────────────────────
-   Frontend aur backend alag GitHub repos pe hain.
-   Yahan sirf BACKEND URL badlo — baaki sab automatic ho jaata hai.
-   ════════════════════════════════════════════════════════════════ */
-var BACKEND    = 'https://marya-hosting.pages.dev';
-var CHAT_API   = BACKEND + '/btfstorage/chat';
-var UPLOAD_API = BACKEND + '/btfstorage/upload';
-
-/* ── STATE ── */
-var TOKEN   = localStorage.getItem('ng_tok') || '';
-var ME      = null;
-var curTab  = 'chats';
-var curChat = null;
-var CC = [], CH = [];
-var pollT = null, replyD = null, ctxD = null, pendAv = null, sending = false;
-var pendingMsgs = {};
-
-/* ── KEY FIX: authed flag
-   Connection lost banner sirf tab dikhega jab user logged in ho.
-   Page load pe ya auth ke time pe FALSE rehta hai — isiliye
-   "Connection lost" galat nahi dikhega. ── */
-var authed = false;
-
-var AVC = ['#5288c1','#7c3aed','#e11d48','#0891b2','#059669','#d97706','#9333ea','#0284c7'];
-
-/* ── HELPERS ── */
-function g(id){ return document.getElementById(id); }
-function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function ini(n){ return (n||'?').trim().slice(0,2).toUpperCase(); }
-function avc(n){ return AVC[(n||' ').charCodeAt(0) % AVC.length]; }
-
-function mkav(name, url, isCh, sz) {
-  sz = sz || 50;
-  var r  = isCh ? 'border-radius:14px' : '';
-  var bg = avc(name);
-  var cls = 'av' + (isCh ? ' ch' : '');
-  if (url) return '<div class="'+cls+'" style="width:'+sz+'px;height:'+sz+'px;background:'+bg+';'+r+'"><img src="'+esc(url)+'" onerror="this.style.display=\'none\'"></div>';
+/* ── BACKEND ──────────────────────────────────────────────────────────
+   Same-origin by default: index.html + /functions/btfstorage/*.js live
+   in ONE Cloudflare Pages project/repo, so requests just hit relative
+   paths on the same domain — no CORS hop, no extra DNS/TLS round trip.
+   If you ever split frontend/backend across two different domains again,
+   set BACKEND to that full https:// URL instead of ''.
+*/
+var BACKEND='';
+var CHAT_API=BACKEND+'/btfstorage/chat';
+var UPLOAD_API=BACKEND+'/btfstorage/upload';   // FIX: was '/upload' — wrong route, uploads/avatars were 404ing
+var TOKEN=localStorage.getItem('ng_tok')||'';
+var ME=null,curTab='chats',curChat=null;
+var CC=[],CH=[];
+var pollT=null,replyD=null,ctxD=null,pendAv=null,sending=false;
+var AVC=['#5288c1','#7c3aed','#e11d48','#0891b2','#059669','#d97706','#9333ea','#0284c7'];
+function g(id){return document.getElementById(id);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function ini(n){return(n||'?').trim().slice(0,2).toUpperCase();}
+function avc(n){return AVC[(n||' ').charCodeAt(0)%AVC.length];}
+function mkav(name,url,isCh,sz){
+  sz=sz||50;
+  var r=isCh?'border-radius:14px':'';
+  var bg=avc(name);
+  var cls='av'+(isCh?' ch':'');
+  if(url) return '<div class="'+cls+'" style="width:'+sz+'px;height:'+sz+'px;background:'+bg+';'+r+'"><img src="'+esc(url)+'" onerror="this.style.display=\'none\'"></div>';
   return '<div class="'+cls+'" style="width:'+sz+'px;height:'+sz+'px;background:'+bg+';'+r+'">'+ini(name)+'</div>';
 }
+function tshort(ts){if(!ts)return'';var d=new Date(ts),n=new Date();if(d.toDateString()===n.toDateString())return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});var df=n-d;if(df<604800000)return['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];return d.toLocaleDateString([],{day:'2-digit',month:'short'});}
+function tfull(ts){return ts?new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):''}
+function dlbl(ts){var d=new Date(ts),n=new Date();if(d.toDateString()===n.toDateString())return'Today';var y=new Date(n);y.setDate(n.getDate()-1);if(d.toDateString()===y.toDateString())return'Yesterday';return d.toLocaleDateString([],{weekday:'long',day:'numeric',month:'long'});}
 
-function tshort(ts) {
-  if (!ts) return '';
-  var d = new Date(ts), n = new Date();
-  if (d.toDateString() === n.toDateString()) return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-  var df = n - d;
-  if (df < 604800000) return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];
-  return d.toLocaleDateString([], {day:'2-digit',month:'short'});
-}
-function tfull(ts){ return ts ? new Date(ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : ''; }
-function dlbl(ts) {
-  var d = new Date(ts), n = new Date();
-  if (d.toDateString() === n.toDateString()) return 'Today';
-  var y = new Date(n); y.setDate(n.getDate()-1);
-  if (d.toDateString() === y.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString([], {weekday:'long',day:'numeric',month:'long'});
-}
-
-/* ── TOAST ── */
-function toast(msg, type) {
-  var el = document.createElement('div');
-  el.className = 'toast ' + (type || 'info');
-  el.textContent = msg;
+function toast(msg,type){
+  var el=document.createElement('div');el.className='toast '+(type||'info');el.textContent=msg;
   g('TOASTS').appendChild(el);
-  requestAnimationFrame(function(){ el.classList.add('show'); });
-  setTimeout(function(){ el.classList.remove('show'); setTimeout(function(){ el.remove(); }, 250); }, 3200);
+  requestAnimationFrame(function(){el.classList.add('show');});
+  setTimeout(function(){el.classList.remove('show');setTimeout(function(){el.remove();},250);},3200);
 }
 
-/* ── CONNECTION BANNER ──
-   setConn(true)  → banner dikhao (only after login)
-   setConn(false) → banner chhupaao                  ── */
-var connBad = false;
-function setConn(bad) {
-  if (!authed) return;          // ← KEY FIX: auth se pehle banner mat dikhaao
-  if (bad === connBad) return;
-  connBad = bad;
-  g('CONN').classList.toggle('show', bad);
+var connBad=false;
+function setConn(bad){
+  if(bad===connBad)return;connBad=bad;
+  g('CONN').classList.toggle('show',bad);
 }
 
-/* ── API FUNCTION ──
-   Saare backend calls yahan se jaate hain.
-   Action-based: { action: 'send_message', ... }    ── */
-async function api(action, body, noAuth) {
-  var h = { 'Content-Type': 'application/json' };
-  if (!noAuth) h['X-Session-Token'] = TOKEN;
-  try {
-    var r = await fetch(CHAT_API, {
-      method: 'POST',
-      headers: h,
-      body: JSON.stringify(Object.assign({ action: action }, body || {}))
-    });
+/* FIX: previously network/CORS failures were silently swallowed (no toast,
+   textbox already cleared) — that's exactly what made "send" look broken
+   with zero feedback. Now every failure is surfaced. */
+async function api(action,body,noAuth){
+  var h={'Content-Type':'application/json'};
+  if(!noAuth)h['X-Session-Token']=TOKEN;
+  try{
+    var r=await fetch(CHAT_API,{method:'POST',headers:h,body:JSON.stringify(Object.assign({action:action},body||{}))});
     setConn(false);
-    var d = await r.json().catch(function(){ return null; });
-    if (r.status === 401) { logout(); return { success:false, error:'Session expired — please log in again' }; }
-    if (!d) return { success:false, error:'Server HTTP ' + r.status + ' — invalid response' };
+    var d=await r.json().catch(function(){return null;});
+    if(r.status===401){logout();return{success:false,error:'Session expired — please log in again'};}
+    if(!d)return{success:false,error:'Server HTTP '+r.status+' — invalid response'};
     return d;
-  } catch(e) {
+  }catch(e){
     setConn(true);
-    return { success:false, _net:true, error:'Network error: ' + e.message };
+    return{success:false,_net:true,error:'Network error: '+e.message};
   }
 }
 
-/* ══════════════════════════════════════════════════════════════
-   AUTH
-   ══════════════════════════════════════════════════════════════ */
-var isReg = false;
-
-window.addEventListener('DOMContentLoaded', function() {
-  g('inPass').addEventListener('keydown', function(e){ if (e.key==='Enter') submitAuth(); });
-  g('authBtn').addEventListener('click', submitAuth);
-  g('msgIn').addEventListener('input', autoH);
-  g('msgIn').addEventListener('keydown', function(e){
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+/* AUTH */
+var isReg=false;
+window.addEventListener('DOMContentLoaded',function(){
+  g('inPass').addEventListener('keydown',function(e){if(e.key==='Enter')submitAuth();});
+  g('authBtn').addEventListener('click',submitAuth);
+  g('msgIn').addEventListener('input',autoH);
+  g('msgIn').addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});
+  document.addEventListener('click',function(e){
+    if(!g('ctx').contains(e.target))hideCtx();
+    if(!g('epick').contains(e.target)&&!e.target.classList.contains('etog'))g('epick').classList.remove('show');
   });
-  document.addEventListener('click', function(e) {
-    if (!g('ctx').contains(e.target)) hideCtx();
-    if (!g('epick').contains(e.target) && !e.target.classList.contains('etog')) g('epick').classList.remove('show');
-  });
-  document.addEventListener('visibilitychange', function() {
-    if (document.visibilityState === 'visible' && curChat) { loadMessages(); startPoll(); }
+  document.addEventListener('visibilitychange',function(){
+    if(document.visibilityState==='visible'&&curChat){loadMessages();startPoll();}
     else clearInterval(pollT);
   });
-
-  /* Auto-login from saved token */
-  if (TOKEN) {
-    api('me').then(function(r) {
-      if (r && r.success) { ME = r.user; enterApp(); }
-      else { TOKEN = ''; localStorage.removeItem('ng_tok'); }
-    });
-  }
+  if(TOKEN)api('me').then(function(r){if(r&&r.success){ME=r.user;enterApp();}else{TOKEN='';localStorage.removeItem('ng_tok');}});
 });
 
-window.toggleAuth = function() {
-  isReg = !isReg;
-  g('fldName').style.display = isReg ? 'block' : 'none';
-  g('authBtn').textContent = isReg ? 'Create Account' : 'Continue';
+window.toggleAuth=function(){
+  isReg=!isReg;
+  g('fldName').style.display=isReg?'block':'none';
+  g('authBtn').textContent=isReg?'Create Account':'Continue';
 };
 
-async function submitAuth() {
-  var un = g('inUser').value.trim(), pw = g('inPass').value;
-  if (!un || !pw) { g('authErr').textContent = 'Fill all fields'; return; }
-  g('authErr').textContent = '';
-  g('authBtn').textContent = '…';
-  g('authBtn').disabled = true;
+async function submitAuth(){
+  var un=g('inUser').value.trim(),pw=g('inPass').value;
+  if(!un||!pw){g('authErr').textContent='Fill all fields';return;}
+  g('authErr').textContent='';g('authBtn').textContent='…';g('authBtn').disabled=true;
   var r;
-  if (isReg) r = await api('register', { username:un, password:pw, display_name:(g('inName').value.trim()||un) }, true);
-  else        r = await api('login',    { username:un, password:pw }, true);
-  g('authBtn').textContent = isReg ? 'Create Account' : 'Continue';
-  g('authBtn').disabled = false;
-  if (!r || !r.success) { g('authErr').textContent = (r && r.error) || 'Connection failed — check backend URL'; return; }
-  TOKEN = r.token; ME = r.user;
-  localStorage.setItem('ng_tok', TOKEN);
-  enterApp();
+  if(isReg)r=await api('register',{username:un,password:pw,display_name:(g('inName').value.trim()||un)},true);
+  else r=await api('login',{username:un,password:pw},true);
+  g('authBtn').textContent=isReg?'Create Account':'Continue';g('authBtn').disabled=false;
+  if(!r||!r.success){g('authErr').textContent=(r&&r.error)||'Connection failed';return;}
+  TOKEN=r.token;ME=r.user;localStorage.setItem('ng_tok',TOKEN);enterApp();
 }
 
-function logout() {
-  authed = false;
-  TOKEN = ''; ME = null;
-  localStorage.removeItem('ng_tok');
-  clearInterval(pollT); curChat = null;
-  connBad = false; g('CONN').classList.remove('show');
-  g('APP').classList.remove('show');
-  g('AUTH').style.display = 'flex';
+function logout(){
+  TOKEN='';ME=null;localStorage.removeItem('ng_tok');
+  clearInterval(pollT);curChat=null;
+  g('APP').classList.remove('show');g('AUTH').style.display='flex';
   closeSheet('shProf');
 }
+function enterApp(){g('AUTH').style.display='none';g('APP').classList.add('show');loadList();}
 
-function enterApp() {
-  authed = true;                 // ← Ab se connection errors dikhenge
-  g('AUTH').style.display = 'none';
-  g('APP').classList.add('show');
-  loadList();
-}
-
-/* ══════════════════════════════════════════════════════════════
-   TABS
-   ══════════════════════════════════════════════════════════════ */
-window.switchTab = function(t) {
-  curTab = t;
-  g('tabC').classList.toggle('on', t === 'chats');
-  g('tabCh').classList.toggle('on', t === 'channels');
-  g('lnewLbl').textContent = t === 'chats' ? 'New Chat' : 'New Channel';
-  g('lexp').style.display  = t === 'channels' ? 'flex' : 'none';
+/* TABS */
+window.switchTab=function(t){
+  curTab=t;
+  g('tabC').classList.toggle('on',t==='chats');
+  g('tabCh').classList.toggle('on',t==='channels');
+  g('lnewLbl').textContent=t==='chats'?'New Chat':'New Channel';
+  g('lexp').style.display=t==='channels'?'flex':'none';
   loadList();
 };
 
-/* ══════════════════════════════════════════════════════════════
-   CHAT LIST
-   ══════════════════════════════════════════════════════════════ */
-async function loadList() {
-  var r = curTab === 'chats' ? await api('list_chats') : await api('my_channels');
-  if (!r || !r.success) return;
-  if (curTab === 'chats') CC = r.chats; else CH = r.channels;
+async function loadList(){
+  var r=curTab==='chats'?await api('list_chats'):await api('my_channels');
+  if(!r||!r.success)return;
+  if(curTab==='chats')CC=r.chats;else CH=r.channels;
   renderList();
 }
 
-function renderList() {
-  var list = curTab === 'chats' ? CC : CH;
-  var wrap = g('lscroll');
-  if (!list.length) {
-    wrap.innerHTML = '<div class="l-empty"><i class="fas fa-comment-slash"></i>' + (curTab === 'chats' ? 'No chats yet' : 'No channels yet') + '</div>';
-    return;
-  }
-  wrap.innerHTML = list.map(function(item) {
-    var isCh = curTab === 'channels';
-    var name = isCh ? item.name : (item.is_group ? item.name : (item.peer ? item.peer.display_name : 'Unknown'));
-    var url  = isCh ? item.avatar_url : (item.peer ? item.peer.avatar_url : null);
-    var last = item.last_type === 'text' ? (item.last_message || '') : (item.last_type ? '📎 ' + item.last_type : '');
-    var key  = (isCh ? 'ch' : 'c') + item.id;
-    var act  = curChat && ((isCh ? 'ch' : 'c') + curChat.id) === key ? ' act' : '';
-    return '<div class="li'+act+'" onclick="openItem('+item.id+')" data-k="'+key+'">'
-      + mkav(name, url, isCh)
-      + '<div class="li-info"><div class="li-top"><span class="li-name">'+esc(name)+'</span><span class="li-time">'+tshort(item.last_at||item.created_at)+'</span></div>'
-      + '<div class="li-last">'+esc(last||'No messages yet')+'</div></div></div>';
+function renderList(){
+  var list=curTab==='chats'?CC:CH;
+  var wrap=g('lscroll');
+  if(!list.length){wrap.innerHTML='<div class="l-empty"><i class="fas fa-comment-slash"></i>'+(curTab==='chats'?'No chats yet':'No channels yet')+'</div>';return;}
+  wrap.innerHTML=list.map(function(item){
+    var isCh=curTab==='channels';
+    var name=isCh?item.name:(item.is_group?item.name:(item.peer?item.peer.display_name:'Unknown'));
+    var url=isCh?item.avatar_url:(item.peer?item.peer.avatar_url:null);
+    var last=item.last_type==='text'?(item.last_message||''):(item.last_type?'📎 '+item.last_type:'');
+    var key=(isCh?'ch':'c')+item.id;
+    var act=curChat&&((isCh?'ch':'c')+curChat.id)===key?' act':'';
+    return '<div class="li'+act+'" onclick="openItem('+item.id+')" data-k="'+key+'">'+
+      mkav(name,url,isCh)+
+      '<div class="li-info"><div class="li-top"><span class="li-name">'+esc(name)+'</span><span class="li-time">'+tshort(item.last_at||item.created_at)+'</span></div>'+
+      '<div class="li-last">'+esc(last||'No messages yet')+'</div></div></div>';
   }).join('');
 }
 
-window.onSearch = function(q) {
-  var ql = q.toLowerCase();
-  var src = curTab === 'chats' ? CC : CH, bak = src.slice();
-  var fil = q ? src.filter(function(i){
-    var n = curTab === 'chats' ? (i.is_group ? i.name : (i.peer ? i.peer.display_name : '')) : i.name;
-    return n.toLowerCase().includes(ql);
-  }) : bak;
-  if (curTab === 'chats') CC = fil; else CH = fil;
-  renderList();
-  if (curTab === 'chats') CC = bak; else CH = bak;
+window.onSearch=function(q){
+  var ql=q.toLowerCase();
+  var src=curTab==='chats'?CC:CH,bak=src.slice();
+  var fil=q?src.filter(function(i){var n=curTab==='chats'?(i.is_group?i.name:(i.peer?i.peer.display_name:'')):i.name;return n.toLowerCase().includes(ql);}):bak;
+  if(curTab==='chats')CC=fil;else CH=fil;renderList();
+  if(curTab==='chats')CC=bak;else CH=bak;
 };
 
-/* ══════════════════════════════════════════════════════════════
-   OPEN CHAT / CHANNEL
-   ══════════════════════════════════════════════════════════════ */
-window.openItem = function(id){ curTab === 'chats' ? openChat(id) : openChannel(id); };
+/* OPEN */
+window.openItem=function(id){curTab==='chats'?openChat(id):openChannel(id);};
 
-function setHeadAv(name, url, isCh) {
-  var el = g('caAv');
-  el.className = 'ch-av' + (isCh ? ' ch' : '');
-  el.style.background = avc(name);
-  el.innerHTML = '';
-  if (url) {
-    var img = document.createElement('img');
-    img.src = url;
-    img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:inherit';
-    img.onerror = function(){ el.textContent = ini(name); };
-    el.appendChild(img);
-  } else {
-    el.textContent = ini(name);
-  }
+function setHeadAv(name,url,isCh){
+  var el=g('caAv');
+  el.className='ch-av'+(isCh?' ch':'');
+  el.style.background=avc(name);el.style.fontWeight='700';el.style.fontSize='.92rem';
+  el.innerHTML='';
+  if(url){var img=document.createElement('img');img.src=url;img.style.cssText='width:100%;height:100%;object-fit:cover;border-radius:inherit';img.onerror=function(){el.textContent=ini(name);};el.appendChild(img);}
+  else el.textContent=ini(name);
 }
 
-function openChat(id) {
-  var c = CC.find(function(x){ return x.id === id; });
-  if (!c) return;
-  var name = c.is_group ? c.name : (c.peer ? c.peer.display_name : 'Unknown');
-  curChat = { type:'chat', id:id, name:name, is_group:!!c.is_group, peer:c.peer, avatarUrl:c.peer ? c.peer.avatar_url : null };
-  g('caName').textContent = name;
-  g('caSub').textContent  = c.is_group ? ((c.member_count||'') + ' members') : (c.peer ? '@' + c.peer.username : '');
-  setHeadAv(name, curChat.avatarUrl, false);
-  g('cinput').style.display = '';
+function openChat(id){
+  var c=CC.find(function(x){return x.id===id;});if(!c)return;
+  var name=c.is_group?c.name:(c.peer?c.peer.display_name:'Unknown');
+  curChat={type:'chat',id:id,name:name,is_group:!!c.is_group,peer:c.peer,avatarUrl:c.peer?c.peer.avatar_url:null};
+  g('caName').textContent=name;
+  g('caSub').textContent=c.is_group?(c.member_count||'')+' members':(c.peer?'@'+c.peer.username:'');
+  setHeadAv(name,curChat.avatarUrl,false);
+  g('cinput').style.display='';showChat();
+}
+async function openChannel(id){
+  var c=CH.find(function(x){return x.id===id;});
+  if(!c){await loadList();c=CH.find(function(x){return x.id===id;});}if(!c)return;
+  curChat={type:'channel',id:id,name:c.name,role:c.role,post_mode:c.post_mode,avatarUrl:c.avatar_url};
+  g('caName').textContent=c.name;g('caSub').textContent='@'+c.handle;
+  setHeadAv(c.name,c.avatar_url,true);
+  g('cinput').style.display=(c.role==='owner'||c.role==='admin'||c.post_mode==='all')?'':'none';
   showChat();
 }
-
-async function openChannel(id) {
-  var c = CH.find(function(x){ return x.id === id; });
-  if (!c) { await loadList(); c = CH.find(function(x){ return x.id === id; }); }
-  if (!c) return;
-  curChat = { type:'channel', id:id, name:c.name, role:c.role, post_mode:c.post_mode, avatarUrl:c.avatar_url };
-  g('caName').textContent = c.name;
-  g('caSub').textContent  = '@' + c.handle;
-  setHeadAv(c.name, c.avatar_url, true);
-  g('cinput').style.display = (c.role === 'owner' || c.role === 'admin' || c.post_mode === 'all') ? '' : 'none';
-  showChat();
-}
-
-function showChat() {
+function showChat(){
   g('VC').classList.add('open');
-  document.querySelectorAll('.li').forEach(function(el){
-    el.classList.toggle('act', el.dataset.k === (curChat.type === 'chat' ? 'c' : 'ch') + curChat.id);
-  });
-  loadMessages();
-  startPoll();
+  document.querySelectorAll('.li').forEach(function(el){el.classList.toggle('act',el.dataset.k===(curChat.type==='chat'?'c':'ch')+curChat.id);});
+  loadMessages();startPoll();
 }
-window.closeChat = function(){ g('VC').classList.remove('open'); clearInterval(pollT); };
+window.closeChat=function(){g('VC').classList.remove('open');clearInterval(pollT);};
 
-/* ══════════════════════════════════════════════════════════════
-   MESSAGES — Load & Render
-   ══════════════════════════════════════════════════════════════ */
-async function loadMessages() {
-  if (!curChat || !ME) return;
-  var snap = curChat;
-  var action = snap.type === 'chat' ? 'get_messages' : 'get_channel_messages';
-  var k = snap.type === 'chat' ? 'chat_id' : 'channel_id';
-  var body = { limit: 80 }; body[k] = snap.id;
-  var r = await api(action, body);
-  if (!r || !r.success) return;
-  if (curChat !== snap) return;   // user switched chat while request was in flight
-  renderMsgs(r.messages || []);
+/* MESSAGES */
+async function loadMessages(){
+  if(!curChat||!ME)return;
+  var chatSnapshot=curChat;
+  var action=chatSnapshot.type==='chat'?'get_messages':'get_channel_messages';
+  var k=chatSnapshot.type==='chat'?'chat_id':'channel_id';
+  var body={limit:80};body[k]=chatSnapshot.id;
+  var r=await api(action,body);
+  if(!r||!r.success)return;
+  if(curChat!==chatSnapshot)return; // user switched chats while this request was in flight
+  renderMsgs(r.messages||[]);
 }
 
-function renderMsgs(msgs) {
-  if (!ME) return;
-  var wrap = g('msgs');
-  var atBot = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 120;
-  if (!msgs.length) {
-    wrap.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:.82rem;padding:3rem 1rem">No messages yet. Say hello! 👋</div>';
-    return;
-  }
-  var html = '', lastD = '', lastS = '';
-  msgs.forEach(function(m) {
-    var dl = new Date(m.created_at).toDateString();
-    if (dl !== lastD) { html += '<div class="dsep"><span>' + dlbl(m.created_at) + '</span></div>'; lastD = dl; lastS = ''; }
-    var mine    = m.sender_id === ME.id;
-    var showAv  = !mine && m.sender_id !== lastS;
-    html += mkBub(m, mine, showAv, showAv && (curChat.is_group || curChat.type === 'channel'));
-    lastS = m.sender_id;
+function renderMsgs(msgs){
+  if(!ME)return;
+  var wrap=g('msgs');
+  var atBot=wrap.scrollHeight-wrap.scrollTop-wrap.clientHeight<120;
+  if(!msgs.length){wrap.innerHTML='<div style="text-align:center;color:var(--muted);font-size:.82rem;padding:3rem 1rem">No messages yet. Say hello! 👋</div>';return;}
+  var html='',lastD='',lastS='';
+  msgs.forEach(function(m){
+    var dl=new Date(m.created_at).toDateString();
+    if(dl!==lastD){html+='<div class="dsep"><span>'+dlbl(m.created_at)+'</span></div>';lastD=dl;lastS='';}
+    var mine=m.sender_id===ME.id;
+    var showAv=!mine&&m.sender_id!==lastS;
+    html+=mkBub(m,mine,showAv,showAv&&(curChat.is_group||curChat.type==='channel'));
+    lastS=m.sender_id;
   });
-  wrap.innerHTML = html;
-  if (atBot) wrap.scrollTop = wrap.scrollHeight;
+  wrap.innerHTML=html;
+  if(atBot)wrap.scrollTop=wrap.scrollHeight;
   attachBubEvts();
 }
 
-function mkBub(m, mine, showAv, showName) {
-  var avh = '';
-  if (!mine) {
-    avh = '<div class="mav-wrap"><div class="mav' + (showAv ? '' : ' hid') + '" style="background:' + avc(m.sender_name) + '">'
-      + (m.sender_avatar ? '<img src="'+esc(m.sender_avatar)+'" onerror="this.style.display=\'none\'">' : ini(m.sender_name||'?'))
-      + '</div></div>';
+function mkBub(m,mine,showAv,showName){
+  var avh='';
+  if(!mine){avh='<div class="mav-wrap"><div class="mav'+(showAv?'':' hid')+'" style="background:'+avc(m.sender_name)+'">'+(m.sender_avatar?'<img src="'+esc(m.sender_avatar)+'" onerror="this.style.display=\'none\'">':ini(m.sender_name||'?'))+'</div></div>';}
+  var bh='';
+  if(m.reply_to)bh+='<div class="brep" onclick="scrollToMsg('+m.reply_to.id+')"><div class="brep-name">'+esc(m.reply_to.sender_name||'')+'</div><div class="brep-txt">'+esc(m.reply_to.content||'[Media]')+'</div></div>';
+  if(m.type==='image'&&m.media_url)bh+='<img class="bimg" src="'+esc(m.media_url)+'" loading="lazy" onclick="window.open(\''+esc(m.media_url)+'\',\'_blank\')">';
+  else if(m.type==='video'&&m.media_url)bh+='<video class="bvid" src="'+esc(m.media_url)+'" controls preload="none"></video>';
+  else if(m.type==='file'&&m.media_url)bh+='<div class="bfile"><i class="fas fa-file"></i><a href="'+esc(m.media_url)+'" target="_blank">'+esc(m.media_name||'File')+'</a></div>';
+  if(m.content)bh+='<div class="btxt">'+esc(m.content)+'</div>';
+  var statusIcon='';
+  if(mine){
+    if(m._pending)statusIcon='<i class="fas fa-clock"></i>';
+    else if(m._failed)statusIcon='<span class="retry" onclick="retrySend(\''+m.id+'\')">tap to retry</span>';
+    else statusIcon='<i class="fas fa-check"></i>';
   }
-  var bh = '';
-  if (m.reply_to) bh += '<div class="brep" onclick="scrollToMsg('+m.reply_to.id+')">'
-    + '<div class="brep-name">'+esc(m.reply_to.sender_name||'')+'</div>'
-    + '<div class="brep-txt">'+esc(m.reply_to.content||'[Media]')+'</div></div>';
-  if (m.type==='image' && m.media_url) bh += '<img class="bimg" src="'+esc(m.media_url)+'" loading="lazy" onclick="window.open(\''+esc(m.media_url)+'\',\'_blank\')">';
-  else if (m.type==='video' && m.media_url) bh += '<video class="bvid" src="'+esc(m.media_url)+'" controls preload="none"></video>';
-  else if (m.type==='file' && m.media_url) bh += '<div class="bfile"><i class="fas fa-file"></i><a href="'+esc(m.media_url)+'" target="_blank">'+esc(m.media_name||'File')+'</a></div>';
-  if (m.content) bh += '<div class="btxt">'+esc(m.content)+'</div>';
-
-  var statusIcon = '';
-  if (mine) {
-    if (m._pending) statusIcon = '<i class="fas fa-clock"></i>';
-    else if (m._failed) statusIcon = '<button class="retry-btn" onclick="retrySend(\''+esc(m.id)+'\')">tap to retry</button>';
-    else statusIcon = '<i class="fas fa-check"></i>';
-  }
-  bh += '<div class="btime">' + tfull(m.created_at) + ' ' + statusIcon + '</div>';
-
-  var rxh = '';
-  if (m.reactions && m.reactions.length) {
-    rxh = '<div class="brxns">';
-    m.reactions.forEach(function(rx){ rxh += '<div class="rxp" onclick="qReact('+m.id+',\''+rx.emoji+'\')">'+rx.emoji+' <span class="rxc">'+rx.count+'</span></div>'; });
-    rxh += '</div>';
-  }
-  var bubCls = 'bub' + (m._pending ? ' pending' : '') + (m._failed ? ' failed' : '');
-  return '<div class="mrow '+(mine?'mine':'other')+'" data-id="'+esc(String(m.id))+'" data-cnt="'+esc(m.content||'')+'" data-sndr="'+esc(m.sender_name||'')+'" data-mine="'+(mine?1:0)+'">'
-    + (mine ? '' : avh)
-    + '<div class="mcont">'
-      + (showName ? '<div class="msname">'+esc(m.sender_name)+'</div>' : '')
-      + '<div class="'+bubCls+'">'+bh+'</div>'+rxh
-    + '</div>'
-    + (mine ? '<div class="mav-wrap"></div>' : '')
-    + '</div>';
+  bh+='<div class="btime">'+tfull(m.created_at)+' '+statusIcon+'</div>';
+  var rxh='';
+  if(m.reactions&&m.reactions.length){rxh='<div class="brxns">';m.reactions.forEach(function(rx){rxh+='<div class="rxp" onclick="qReact('+m.id+',\''+rx.emoji+'\')">'+rx.emoji+' <span class="rxc">'+rx.count+'</span></div>';});rxh+='</div>';}
+  var bubCls='bub'+(m._pending?' pending':'')+(m._failed?' failed':'');
+  return '<div class="mrow '+(mine?'mine':'other')+'" data-id="'+m.id+'" data-cnt="'+esc(m.content||'')+'" data-sndr="'+esc(m.sender_name||'')+'" data-mine="'+(mine?1:0)+'">'
+    +(mine?'':avh)
+    +'<div class="mcont">'
+      +(showName?'<div class="msname">'+esc(m.sender_name)+'</div>':'')
+      +'<div class="'+bubCls+'">'+bh+'</div>'+rxh
+    +'</div>'
+    +(mine?'<div class="mav-wrap"></div>':'')
+    +'</div>';
 }
 
-function attachBubEvts() {
-  g('msgs').querySelectorAll('.bub').forEach(function(b) {
-    b.addEventListener('contextmenu', function(e){ e.preventDefault(); showCtx(e, b); });
+function attachBubEvts(){
+  g('msgs').querySelectorAll('.bub').forEach(function(b){
+    b.addEventListener('contextmenu',function(e){e.preventDefault();showCtx(e,b);});
     var t;
-    b.addEventListener('touchstart', function(e){ t = setTimeout(function(){ showCtx(e.touches[0], b); }, 500); }, {passive:true});
-    b.addEventListener('touchend',   function(){ clearTimeout(t); });
-    b.addEventListener('touchmove',  function(){ clearTimeout(t); });
+    b.addEventListener('touchstart',function(e){t=setTimeout(function(){showCtx(e.touches[0],b);},500);},{passive:true});
+    b.addEventListener('touchend',function(){clearTimeout(t);});
+    b.addEventListener('touchmove',function(){clearTimeout(t);});
   });
 }
 
-function scrollToMsg(id) {
-  var el = g('msgs').querySelector('[data-id="'+id+'"]');
-  if (el) {
-    el.scrollIntoView({ behavior:'smooth', block:'center' });
-    var b = el.querySelector('.bub');
-    if (b) { b.style.outline = '2px solid var(--accent)'; setTimeout(function(){ b.style.outline = ''; }, 1200); }
-  }
+function scrollToMsg(id){
+  var el=g('msgs').querySelector('[data-id="'+id+'"]');
+  if(el){el.scrollIntoView({behavior:'smooth',block:'center'});var b=el.querySelector('.bub');b.style.outline='2px solid var(--accent)';setTimeout(function(){b.style.outline='';},1200);}
 }
 
-/* ══════════════════════════════════════════════════════════════
-   SEND MESSAGE — Optimistic UI
-   Message turant dikhta hai, server confirm karne ke baad refresh
-   ══════════════════════════════════════════════════════════════ */
-async function sendMsg() {
-  var text = g('msgIn').value.trim();
-  if (!text || !curChat || sending) return;
-  var snap = curChat;
+/* SEND — optimistic: bubble appears instantly, gets confirmed/replaced
+   once the server responds. Failure is always shown, text is restored
+   so nothing typed gets silently lost. */
+var pendingMsgs={};
+async function sendMsg(){
+  var text=g('msgIn').value.trim();
+  if(!text||!curChat||sending)return;
+  var chatSnapshot=curChat;
+  g('msgIn').value='';g('msgIn').style.height='auto';
+  sending=true;g('sendBtn').disabled=true;
 
-  g('msgIn').value = ''; g('msgIn').style.height = 'auto';
-  sending = true; g('sendBtn').disabled = true;
-  g('sendBtn').innerHTML = '<i class="fas fa-spinner"></i>';
-
-  var tmpId = 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-  var tmp = {
-    id: tmpId,
-    sender_id: ME.id, sender_name: ME.display_name, sender_avatar: ME.avatar_url,
-    type: 'text', content: text,
-    created_at: Date.now(),
-    _pending: true,
-    reply_to: replyD ? { id: replyD.id, sender_name: replyD.sender_name, content: replyD.content } : null
-  };
-  pendingMsgs[tmpId] = tmp;
+  var tmpId='tmp_'+Date.now()+'_'+Math.random().toString(36).slice(2);
+  var tmp={id:tmpId,sender_id:ME.id,sender_name:ME.display_name,sender_avatar:ME.avatar_url,type:'text',content:text,created_at:Date.now(),_pending:true,reply_to:replyD?{id:replyD.id,sender_name:replyD.sender_name,content:replyD.content}:null};
+  pendingMsgs[tmpId]=tmp;
   appendOptimistic(tmp);
 
-  var action = snap.type === 'chat' ? 'send_message' : 'send_channel_message';
-  var k      = snap.type === 'chat' ? 'chat_id'      : 'channel_id';
-  var body   = { type:'text', content:text }; body[k] = snap.id;
-  if (replyD) { body.reply_to_id = replyD.id; clearReply(); }
+  var action=curChat.type==='chat'?'send_message':'send_channel_message';
+  var k=curChat.type==='chat'?'chat_id':'channel_id';
+  var body={type:'text',content:text};body[k]=curChat.id;
+  var usedReply=replyD;
+  if(replyD){body.reply_to_id=replyD.id;clearReply();}
 
-  var r = await api(action, body);
-  sending = false;
-  g('sendBtn').disabled = false;
-  g('sendBtn').innerHTML = '<i class="fas fa-paper-plane"></i>';
+  var r=await api(action,body);
+  sending=false;g('sendBtn').disabled=false;
 
-  if (r && r.success) {
+  if(r&&r.success){
     delete pendingMsgs[tmpId];
-    if (curChat === snap) loadMessages();
+    if(curChat===chatSnapshot)loadMessages();
     loadList();
-  } else {
-    tmp._pending = false; tmp._failed = true;
-    if (curChat === snap) updateOptimistic(tmp);
-    toast((r && r.error) || 'Message not sent — check connection', 'error');
+  }else{
+    tmp._pending=false;tmp._failed=true;
+    if(curChat===chatSnapshot)updateOptimistic(tmp);
+    toast((r&&r.error)||'Message not sent — tap it to retry','error');
   }
 }
 
-function appendOptimistic(m) {
-  var wrap = g('msgs');
-  if (wrap.children.length === 1 && wrap.textContent.indexOf('No messages yet') > -1) wrap.innerHTML = '';
-  wrap.insertAdjacentHTML('beforeend', mkBub(m, true, false, false));
-  wrap.scrollTop = wrap.scrollHeight;
+function appendOptimistic(m){
+  var wrap=g('msgs');
+  if(wrap.querySelector('.l-empty')||!wrap.children.length){
+    var empty=wrap.querySelector('div');
+    if(empty&&wrap.children.length===1&&wrap.textContent.indexOf('No messages yet')>-1)wrap.innerHTML='';
+  }
+  wrap.insertAdjacentHTML('beforeend',mkBub(m,true,false,false));
+  wrap.scrollTop=wrap.scrollHeight;
   attachBubEvts();
 }
-
-function updateOptimistic(m) {
-  var el = g('msgs').querySelector('[data-id="'+m.id+'"]');
-  if (!el) return;
-  var repl = document.createElement('div');
-  repl.innerHTML = mkBub(m, true, false, false);
+function updateOptimistic(m){
+  var el=g('msgs').querySelector('[data-id="'+m.id+'"]');
+  if(!el)return;
+  var repl=document.createElement('div');repl.innerHTML=mkBub(m,true,false,false);
   el.replaceWith(repl.firstElementChild);
   attachBubEvts();
 }
-
-/* ── RETRY: failed message dobara bhejna ── */
-window.retrySend = async function(tmpId) {
-  var m = pendingMsgs[tmpId]; if (!m || !curChat) return;
-  m._pending = true; m._failed = false;
-  updateOptimistic(m);
-  var action = curChat.type === 'chat' ? 'send_message' : 'send_channel_message';
-  var k      = curChat.type === 'chat' ? 'chat_id'      : 'channel_id';
-  var body   = { type: m.type, content: m.content }; body[k] = curChat.id;
-  if (m.reply_to) body.reply_to_id = m.reply_to.id;
-  var r = await api(action, body);
-  if (r && r.success) {
-    delete pendingMsgs[tmpId];
-    loadMessages(); loadList();
-  } else {
-    m._pending = false; m._failed = true;
-    updateOptimistic(m);
-    toast((r && r.error) || 'Still failing — check your connection', 'error');
-  }
+window.retrySend=async function(tmpId){
+  var m=pendingMsgs[tmpId];if(!m||!curChat)return;
+  m._pending=true;m._failed=false;updateOptimistic(m);
+  var action=curChat.type==='chat'?'send_message':'send_channel_message';
+  var k=curChat.type==='chat'?'chat_id':'channel_id';
+  var body={type:m.type,content:m.content};body[k]=curChat.id;
+  if(m.reply_to)body.reply_to_id=m.reply_to.id;
+  var r=await api(action,body);
+  if(r&&r.success){delete pendingMsgs[tmpId];loadMessages();loadList();}
+  else{m._pending=false;m._failed=true;updateOptimistic(m);toast((r&&r.error)||'Still failing — check your connection','error');}
 };
 
-function autoH() { var t = g('msgIn'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 110) + 'px'; }
+function autoH(){var t=g('msgIn');t.style.height='auto';t.style.height=Math.min(t.scrollHeight,110)+'px';}
 
-/* ══════════════════════════════════════════════════════════════
-   FILE UPLOAD — Circular progress Telegram-style
-   ══════════════════════════════════════════════════════════════ */
-async function onFile(input) {
-  var file = input.files[0]; if (!file || !curChat) { input.value = ''; return; }
-  input.value = '';
-  var isImg = file.type.startsWith('image/'), isVid = file.type.startsWith('video/');
-  var type  = isImg ? 'image' : isVid ? 'video' : 'file';
-  var tid   = 't' + Date.now();
+/* FILE UPLOAD — Telegram-like circular progress */
+async function onFile(input){
+  var file=input.files[0];if(!file||!curChat){input.value='';return;}
+  input.value='';
+  var isImg=file.type.startsWith('image/'),isVid=file.type.startsWith('video/');
+  var type=isImg?'image':isVid?'video':'file';
+  var tid='t'+Date.now();
 
-  var prevHtml = (isImg || isVid)
-    ? '<div class="upend" id="up_'+tid+'"><div class="ucirc-wrap"><svg viewBox="0 0 48 48" width="54" height="54"><circle class="ucirc-bg" cx="24" cy="24" r="22"/><circle class="ucirc-fill" id="cf_'+tid+'" cx="24" cy="24" r="22"/></svg><div class="upct" id="cp_'+tid+'">0%</div></div></div>'
-    : '<div style="display:flex;align-items:center;gap:.5rem;padding:.3rem 0" id="up_'+tid+'"><div class="ucirc-wrap"><svg viewBox="0 0 48 48" width="36" height="36"><circle class="ucirc-bg" cx="24" cy="24" r="22"/><circle class="ucirc-fill" id="cf_'+tid+'" cx="24" cy="24" r="22"/></svg><div class="upct" id="cp_'+tid+'" style="font-size:.55rem">0%</div></div><span style="font-size:.75rem;color:var(--muted2)">'+esc(file.name)+'</span></div>';
+  var prevHtml=isImg||isVid?
+    '<div class="upend" id="up_'+tid+'"><div class="ucirc-wrap"><svg viewBox="0 0 48 48" width="54" height="54"><circle class="ucirc-bg" cx="24" cy="24" r="22"/><circle class="ucirc-fill" id="cf_'+tid+'" cx="24" cy="24" r="22"/></svg><div class="upct" id="cp_'+tid+'">0%</div></div></div>':
+    '<div style="display:flex;align-items:center;gap:.5rem;padding:.3rem 0" id="up_'+tid+'"><div class="ucirc-wrap"><svg viewBox="0 0 48 48" width="36" height="36"><circle class="ucirc-bg" cx="24" cy="24" r="22"/><circle class="ucirc-fill" id="cf_'+tid+'" cx="24" cy="24" r="22"/></svg><div class="upct" id="cp_'+tid+'" style="font-size:.55rem">0%</div></div><span style="font-size:.75rem;color:var(--muted2)">'+esc(file.name)+'</span></div>';
+  var tmpRow='<div class="mrow mine" id="row_'+tid+'"><div class="mav-wrap"></div><div class="mcont"><div class="bub pending">'+prevHtml+'<div class="btime">Uploading…</div></div></div></div>';
+  var msgs=g('msgs');
+  msgs.insertAdjacentHTML('beforeend',tmpRow);
+  msgs.scrollTop=msgs.scrollHeight;
 
-  var tmpRow = '<div class="mrow mine" id="row_'+tid+'"><div class="mav-wrap"></div><div class="mcont"><div class="bub pending">'+prevHtml+'<div class="btime">Uploading…</div></div></div></div>';
-  var msgs = g('msgs');
-  msgs.insertAdjacentHTML('beforeend', tmpRow);
-  msgs.scrollTop = msgs.scrollHeight;
-
-  function setPct(pct) {
-    var c = document.getElementById('cf_'+tid), p = document.getElementById('cp_'+tid);
-    if (c) { var circ = 2*Math.PI*22; c.style.strokeDashoffset = circ - (circ*pct/100); }
-    if (p) p.textContent = pct + '%';
+  function setPct(pct){
+    var c=document.getElementById('cf_'+tid),p=document.getElementById('cp_'+tid);
+    if(c){var circ=2*Math.PI*22;c.style.strokeDashoffset=circ-(circ*pct/100);}
+    if(p)p.textContent=pct+'%';
   }
 
-  try {
-    var fd = new FormData(); fd.append('file', file, file.name);
-    var result = await new Promise(function(res, rej) {
-      var xhr = new XMLHttpRequest();
-      xhr.upload.addEventListener('progress', function(e){ if (e.lengthComputable) setPct(Math.round(e.loaded/e.total*100)); });
-      xhr.onload  = function(){ try { res(JSON.parse(xhr.responseText)); } catch(e){ rej(new Error('Invalid response ('+xhr.status+')')); } };
-      xhr.onerror = function(){ rej(new Error('Network error during upload')); };
-      xhr.open('POST', UPLOAD_API); xhr.send(fd);
+  try{
+    var fd=new FormData();fd.append('file',file,file.name);
+    var result=await new Promise(function(res,rej){
+      var xhr=new XMLHttpRequest();
+      xhr.upload.addEventListener('progress',function(e){if(e.lengthComputable)setPct(Math.round(e.loaded/e.total*100));});
+      xhr.onload=function(){try{res(JSON.parse(xhr.responseText));}catch(e){rej(new Error('Invalid response ('+xhr.status+')'));}};
+      xhr.onerror=function(){rej(new Error('Network error during upload'));};
+      xhr.open('POST',UPLOAD_API);xhr.send(fd);
     });
-    var rowEl = document.getElementById('row_'+tid); if (rowEl) rowEl.remove();
-    if (!result || !result.success) { toast('Upload failed: ' + (result && result.error || 'unknown'), 'error'); return; }
-    var mediaUrl = (result.urls && result.urls.stream) ? result.urls.stream : '';
-    if (!mediaUrl && result.id) {
-      var ext = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')) : '';
-      mediaUrl = BACKEND + '/btfstorage/server/' + result.id + ext;
-    }
-    var action = curChat.type === 'chat' ? 'send_message' : 'send_channel_message';
-    var k      = curChat.type === 'chat' ? 'chat_id'      : 'channel_id';
-    var body   = { type:type, media_url:mediaUrl, media_name:file.name, content:'' }; body[k] = curChat.id;
-    if (replyD) { body.reply_to_id = replyD.id; clearReply(); }
-    var r = await api(action, body);
-    if (r && r.success) { loadMessages(); loadList(); }
-    else toast((r && r.error) || 'Send failed', 'error');
-  } catch(e) {
-    var rowEl2 = document.getElementById('row_'+tid); if (rowEl2) rowEl2.remove();
-    toast('Upload error: ' + e.message, 'error');
+    var rowEl=document.getElementById('row_'+tid);if(rowEl)rowEl.remove();
+    if(!result||!result.success){toast('Upload failed: '+(result&&result.error||'unknown'),'error');return;}
+    var mediaUrl=(result.urls&&result.urls.stream)?result.urls.stream:'';
+    if(!mediaUrl&&result.id){var ext=file.name.includes('.')?file.name.slice(file.name.lastIndexOf('.')):'';mediaUrl=BACKEND+'/btfstorage/server/'+result.id+ext;}
+    var action=curChat.type==='chat'?'send_message':'send_channel_message';
+    var k=curChat.type==='chat'?'chat_id':'channel_id';
+    var body={type:type,media_url:mediaUrl,media_name:file.name,content:''};body[k]=curChat.id;
+    if(replyD){body.reply_to_id=replyD.id;clearReply();}
+    var r=await api(action,body);
+    if(r&&r.success){loadMessages();loadList();}
+    else toast((r&&r.error)||'Send failed','error');
+  }catch(e){
+    var rowEl2=document.getElementById('row_'+tid);if(rowEl2)rowEl2.remove();
+    toast('Upload error: '+e.message,'error');
   }
 }
 
-/* ── AVATAR UPLOAD ── */
-async function uploadAv(input) {
-  var file = input.files[0]; if (!file) return;
-  toast('Uploading…', 'info');
-  var fd = new FormData(); fd.append('file', file, file.name);
-  try {
-    var r = await fetch(UPLOAD_API, { method:'POST', body:fd });
-    var d = await r.json();
-    if (!d.success && !d.id) { toast('Upload failed: ' + (d.error || 'unknown'), 'error'); return; }
-    var url = (d.urls && d.urls.stream) ? d.urls.stream
-            : (BACKEND + '/btfstorage/server/' + (d.id||'') + (file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')) : ''));
-    pendAv = url;
-    g('profAv').innerHTML = '<img src="'+url+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">';
-    toast('Avatar uploaded!', 'success');
-  } catch(e) { toast('Upload error: ' + e.message, 'error'); }
+/* AVATAR UPLOAD */
+async function uploadAv(input){
+  var file=input.files[0];if(!file)return;
+  toast('Uploading…','info');
+  var fd=new FormData();fd.append('file',file,file.name);
+  try{
+    var r=await fetch(UPLOAD_API,{method:'POST',body:fd});
+    var d=await r.json();
+    if(!d.success&&!d.id){toast('Upload failed: '+(d.error||'unknown'),'error');return;}
+    var url=(d.urls&&d.urls.stream)?d.urls.stream:(BACKEND+'/btfstorage/server/'+(d.id||'')+(file.name.includes('.')?file.name.slice(file.name.lastIndexOf('.')):''));
+    pendAv=url;
+    var big=g('profAv');
+    big.innerHTML='<img src="'+url+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">';
+    toast('Avatar uploaded!','success');
+  }catch(e){toast('Upload error: '+e.message,'error');}
 }
 
-/* ══════════════════════════════════════════════════════════════
-   REPLY
-   ══════════════════════════════════════════════════════════════ */
-window.clearReply = function() { replyD = null; g('rstrip').classList.remove('show'); };
-function setReply(d) {
-  replyD = d;
-  g('rstrip').classList.add('show');
-  g('rname').textContent = d.sender_name || 'Unknown';
-  g('rtxt').textContent  = d.content || '[Media]';
-  g('msgIn').focus();
-}
+/* REPLY */
+window.clearReply=function(){replyD=null;g('rstrip').classList.remove('show');};
+function setReply(d){replyD=d;g('rstrip').classList.add('show');g('rname').textContent=d.sender_name||'Unknown';g('rtxt').textContent=d.content||'[Media]';g('msgIn').focus();}
 
-/* ══════════════════════════════════════════════════════════════
-   CONTEXT MENU (long press / right click)
-   ══════════════════════════════════════════════════════════════ */
-function showCtx(e, bel) {
-  var row = bel.closest('.mrow');
-  ctxD = { id: row.dataset.id, content: row.dataset.cnt, sender_name: row.dataset.sndr, mine: row.dataset.mine === '1' };
-  g('cxdel').style.display = ctxD.mine ? 'flex' : 'none';
-  var ctx = g('ctx'); ctx.classList.add('show');
-  var x = e.clientX || e.pageX || 0, y = e.clientY || e.pageY || 0;
-  ctx.style.left = Math.min(x, window.innerWidth  - 188) + 'px';
-  ctx.style.top  = Math.min(y, window.innerHeight - 220) + 'px';
+/* CTX */
+function showCtx(e,bel){
+  var row=bel.closest('.mrow');
+  ctxD={id:row.dataset.id,content:row.dataset.cnt,sender_name:row.dataset.sndr,mine:row.dataset.mine==='1'};
+  g('cxdel').style.display=ctxD.mine?'flex':'none';
+  var ctx=g('ctx');ctx.classList.add('show');
+  var x=e.clientX||e.pageX||0,y=e.clientY||e.pageY||0;
+  ctx.style.left=Math.min(x,window.innerWidth-188)+'px';
+  ctx.style.top=Math.min(y,window.innerHeight-220)+'px';
 }
-function hideCtx() { g('ctx').classList.remove('show'); ctxD = null; }
-
-window.doReact = async function(emoji) {
-  if (!ctxD || String(ctxD.id).indexOf('tmp_') === 0) return;
-  var a = curChat.type === 'chat' ? 'react_message' : 'react_channel_message';
-  await api(a, { message_id: ctxD.id, emoji: emoji });
-  hideCtx(); loadMessages();
-};
-window.qReact = async function(id, emoji) {
-  var a = curChat.type === 'chat' ? 'react_message' : 'react_channel_message';
-  await api(a, { message_id: id, emoji: emoji }); loadMessages();
-};
-window.doReply = function() { if (!ctxD) return; setReply({ id:ctxD.id, sender_name:ctxD.sender_name, content:ctxD.content }); hideCtx(); };
-window.doCopy  = function() {
-  if (!ctxD) return;
-  navigator.clipboard && navigator.clipboard.writeText(ctxD.content || '');
-  toast('Copied!', 'info'); hideCtx();
-};
-window.doDel   = async function() {
-  if (!ctxD || !ctxD.mine) return;
-  if (String(ctxD.id).indexOf('tmp_') === 0) {
-    var el = g('msgs').querySelector('[data-id="'+ctxD.id+'"]'); if (el) el.remove();
-    delete pendingMsgs[ctxD.id]; hideCtx(); return;
+function hideCtx(){g('ctx').classList.remove('show');ctxD=null;}
+window.doReact=async function(emoji){if(!ctxD||String(ctxD.id).indexOf('tmp_')===0)return;var a=curChat.type==='chat'?'react_message':'react_channel_message';await api(a,{message_id:ctxD.id,emoji:emoji});hideCtx();loadMessages();};
+window.qReact=async function(id,emoji){var a=curChat.type==='chat'?'react_message':'react_channel_message';await api(a,{message_id:id,emoji:emoji});loadMessages();};
+window.doReply=function(){if(!ctxD)return;setReply({id:ctxD.id,sender_name:ctxD.sender_name,content:ctxD.content});hideCtx();};
+window.doCopy=function(){if(!ctxD)return;navigator.clipboard&&navigator.clipboard.writeText(ctxD.content||'');toast('Copied!','info');hideCtx();};
+window.doDel=async function(){
+  if(!ctxD||!ctxD.mine)return;
+  if(String(ctxD.id).indexOf('tmp_')===0){
+    var el=g('msgs').querySelector('[data-id="'+ctxD.id+'"]');if(el)el.remove();
+    delete pendingMsgs[ctxD.id];hideCtx();return;
   }
-  var a = curChat.type === 'chat' ? 'delete_message' : 'delete_channel_message';
-  var r = await api(a, { message_id: ctxD.id });
-  if (r && r.success) { toast('Deleted', 'info'); loadMessages(); }
-  else toast((r && r.error) || 'Delete failed', 'error');
+  var a=curChat.type==='chat'?'delete_message':'delete_channel_message';
+  var r=await api(a,{message_id:ctxD.id});
+  if(r&&r.success){toast('Deleted','info');loadMessages();}else toast((r&&r.error)||'Delete failed','error');
   hideCtx();
 };
 
-/* ══════════════════════════════════════════════════════════════
-   EMOJI PICKER
-   ══════════════════════════════════════════════════════════════ */
-window.toggleEP = function() { g('epick').classList.toggle('show'); };
-window.addE = function(e) {
-  var t = g('msgIn'), s = t.selectionStart;
-  t.value = t.value.slice(0, s) + e + t.value.slice(t.selectionEnd);
-  t.selectionStart = t.selectionEnd = s + e.length;
-  t.focus(); autoH(); g('epick').classList.remove('show');
-};
+/* EMOJI */
+window.toggleEP=function(){g('epick').classList.toggle('show');};
+window.addE=function(e){var t=g('msgIn'),s=t.selectionStart;t.value=t.value.slice(0,s)+e+t.value.slice(t.selectionEnd);t.selectionStart=t.selectionEnd=s+e.length;t.focus();autoH();g('epick').classList.remove('show');};
 
-/* ══════════════════════════════════════════════════════════════
-   NEW CHAT / CHANNEL
-   ══════════════════════════════════════════════════════════════ */
-window.openNewItem = function() { curTab === 'chats' ? openSheet('shChat') : openSheet('shChan'); };
-
-var udeb = null;
-window.searchUsers = function(q) {
+/* NEW CHAT/CHANNEL */
+window.openNewItem=function(){curTab==='chats'?openSheet('shChat'):openSheet('shChan');};
+var udeb=null;
+window.searchUsers=function(q){
   clearTimeout(udeb);
-  udeb = setTimeout(async function() {
-    var res = g('ures'); if (!q.trim()) { res.innerHTML = ''; return; }
-    var r = await api('search_users', { q: q }); if (!r || !r.success) return;
-    res.innerHTML = r.users.length
-      ? r.users.map(function(u){
-          return '<div class="sri" onclick="startDM(\''+esc(u.username)+'\')">'
-            + '<div class="srav" style="background:'+avc(u.display_name)+'">'+ini(u.display_name)+'</div>'
-            + '<div><div class="srname">'+esc(u.display_name)+'</div><div class="sruser">@'+esc(u.username)+'</div></div></div>';
-        }).join('')
-      : '<div style="padding:.7rem;color:var(--muted);font-size:.78rem">No users found</div>';
-  }, 300);
+  udeb=setTimeout(async function(){
+    var res=g('ures');if(!q.trim()){res.innerHTML='';return;}
+    var r=await api('search_users',{q:q});if(!r||!r.success)return;
+    res.innerHTML=r.users.length?r.users.map(function(u){
+      return '<div class="sri" onclick="startDM(\''+esc(u.username)+'\')">'
+        +'<div class="srav" style="background:'+avc(u.display_name)+'">'+ini(u.display_name)+'</div>'
+        +'<div><div class="srname">'+esc(u.display_name)+'</div><div class="sruser">@'+esc(u.username)+'</div></div></div>';
+    }).join(''):'<div style="padding:.7rem;color:var(--muted);font-size:.78rem">No users found</div>';
+  },300);
 };
-
-window.startDM = async function(un) {
+window.startDM=async function(un){
   closeSheet('shChat');
-  var r = await api('create_chat', { is_group:false, peer_username:un });
-  if (!r || !r.success) { toast((r && r.error) || 'Failed', 'error'); return; }
-  if (curTab !== 'chats') { switchTab('chats'); } else { await loadList(); }
-  await loadList(); openChat(r.chat_id);
+  var r=await api('create_chat',{is_group:false,peer_username:un});
+  if(!r||!r.success){toast((r&&r.error)||'Failed','error');return;}
+  if(curTab!=='chats'){switchTab('chats');}else{await loadList();}
+  await loadList();openChat(r.chat_id);
 };
-
-window.createGroup = async function() {
-  var name = g('grpn').value.trim(); if (!name) { toast('Enter group name', 'error'); return; }
-  var r = await api('create_chat', { is_group:true, name:name, member_usernames:[] });
-  if (!r || !r.success) { toast((r && r.error) || 'Failed', 'error'); return; }
-  closeSheet('shChat'); await loadList(); openChat(r.chat_id);
+window.createGroup=async function(){
+  var name=g('grpn').value.trim();if(!name){toast('Enter group name','error');return;}
+  var r=await api('create_chat',{is_group:true,name:name,member_usernames:[]});
+  if(!r||!r.success){toast((r&&r.error)||'Failed','error');return;}
+  closeSheet('shChat');await loadList();openChat(r.chat_id);
 };
-
-window.createChannel = async function() {
-  var name = g('chN').value.trim(), handle = g('chH').value.trim();
-  if (!name || !handle) { toast('Name and handle required', 'error'); return; }
-  var r = await api('create_channel', { name:name, handle:handle.replace(/^@/,''), description:g('chD').value.trim(), post_mode:g('chM').value });
-  if (!r || !r.success) { toast((r && r.error) || 'Failed', 'error'); return; }
-  toast('Channel created!', 'success'); closeSheet('shChan');
-  if (curTab !== 'channels') switchTab('channels'); else { await loadList(); openChannel(r.channel_id); }
+window.createChannel=async function(){
+  var name=g('chN').value.trim(),handle=g('chH').value.trim();
+  if(!name||!handle){toast('Name and handle required','error');return;}
+  var r=await api('create_channel',{name:name,handle:handle.replace(/^@/,''),description:g('chD').value.trim(),post_mode:g('chM').value});
+  if(!r||!r.success){toast((r&&r.error)||'Failed','error');return;}
+  toast('Channel created!','success');closeSheet('shChan');
+  if(curTab!=='channels')switchTab('channels');else{await loadList();openChannel(r.channel_id);}
 };
-
-window.openExplore = function() { g('exq').value = ''; searchChannels(''); openSheet('shExp'); };
-var edeb = null;
-window.searchChannels = function(q) {
+window.openExplore=function(){g('exq').value='';searchChannels('');openSheet('shExp');};
+var edeb=null;
+window.searchChannels=function(q){
   clearTimeout(edeb);
-  edeb = setTimeout(async function() {
-    var r = await api('list_channels', { q: q }); if (!r || !r.success) return;
-    g('exres').innerHTML = r.channels.length
-      ? r.channels.map(function(c){
-          return '<div class="sri">'
-            + '<div class="srav" style="background:'+avc(c.name)+';border-radius:10px">'+ini(c.name)+'</div>'
-            + '<div style="flex:1;min-width:0"><div class="srname">'+esc(c.name)+'</div><div class="sruser">@'+esc(c.handle)+' · '+c.member_count+' members</div></div>'
-            + (c.joined ? '<span style="font-size:.68rem;color:var(--green);font-weight:700">✓</span>' : '<button class="jbtn" onclick="event.stopPropagation();joinCh('+c.id+')">Join</button>')
-            + '</div>';
-        }).join('')
-      : '<div style="padding:.7rem;color:var(--muted);font-size:.78rem">No channels found</div>';
-  }, 300);
+  edeb=setTimeout(async function(){
+    var r=await api('list_channels',{q:q});if(!r||!r.success)return;
+    g('exres').innerHTML=r.channels.length?r.channels.map(function(c){
+      return '<div class="sri">'
+        +'<div class="srav" style="background:'+avc(c.name)+';border-radius:10px">'+ini(c.name)+'</div>'
+        +'<div style="flex:1;min-width:0"><div class="srname">'+esc(c.name)+'</div><div class="sruser">@'+esc(c.handle)+' · '+c.member_count+' members</div></div>'
+        +(c.joined?'<span style="font-size:.68rem;color:var(--green);font-weight:700">✓</span>':'<button class="jbtn" onclick="event.stopPropagation();joinCh('+c.id+')">Join</button>')
+        +'</div>';
+    }).join(''):'<div style="padding:.7rem;color:var(--muted);font-size:.78rem">No channels found</div>';
+  },300);
+};
+window.joinCh=async function(id){
+  var r=await api('join_channel',{channel_id:id});
+  if(r&&r.success){toast('Joined!','success');searchChannels(g('exq').value);loadList();}
+  else toast((r&&r.error)||'Failed','error');
 };
 
-window.joinCh = async function(id) {
-  var r = await api('join_channel', { channel_id: id });
-  if (r && r.success) { toast('Joined!', 'success'); searchChannels(g('exq').value); loadList(); }
-  else toast((r && r.error) || 'Failed', 'error');
+/* PROFILE */
+window.openProfile=function(){openSheet('shProf');};
+window.saveProfile=async function(){
+  var name=g('profN').value.trim();var body={};
+  if(name&&name!==ME.display_name)body.display_name=name;
+  if(pendAv)body.avatar_url=pendAv;
+  if(!Object.keys(body).length){closeSheet('shProf');return;}
+  var r=await api('update_profile',body);
+  if(!r||!r.success){toast((r&&r.error)||'Failed','error');return;}
+  ME=r.user;pendAv=null;toast('Profile updated!','success');closeSheet('shProf');loadList();
 };
 
-/* ══════════════════════════════════════════════════════════════
-   PROFILE
-   ══════════════════════════════════════════════════════════════ */
-window.openProfile = function() { openSheet('shProf'); };
-window.saveProfile = async function() {
-  var name = g('profN').value.trim(); var body = {};
-  if (name && name !== ME.display_name) body.display_name = name;
-  if (pendAv) body.avatar_url = pendAv;
-  if (!Object.keys(body).length) { closeSheet('shProf'); return; }
-  var r = await api('update_profile', body);
-  if (!r || !r.success) { toast((r && r.error) || 'Failed', 'error'); return; }
-  ME = r.user; pendAv = null;
-  toast('Profile updated!', 'success'); closeSheet('shProf'); loadList();
-};
-
-/* ══════════════════════════════════════════════════════════════
-   SHEETS
-   ══════════════════════════════════════════════════════════════ */
-window.openSheet = function(id) {
-  if (id === 'shProf') {
-    if (!ME) return;
-    var big = g('profAv'); big.style.background = avc(ME.display_name);
-    if (ME.avatar_url) big.innerHTML = '<img src="'+ME.avatar_url+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">';
-    else big.innerHTML = '<span style="font-size:2rem;font-weight:800;color:#fff">'+ini(ME.display_name)+'</span>';
-    g('profN').value = ME.display_name; pendAv = null;
+window.openSheet=function(id){
+  if(id==='shProf'){
+    if(!ME)return;
+    var big=g('profAv');big.style.background=avc(ME.display_name);
+    if(ME.avatar_url)big.innerHTML='<img src="'+ME.avatar_url+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">';
+    else big.innerHTML='<span style="font-size:2rem;font-weight:800;color:#fff">'+ini(ME.display_name)+'</span>';
+    g('profN').value=ME.display_name;pendAv=null;
   }
   g(id).classList.add('show');
 };
-window.closeSheet = function(id) { g(id).classList.remove('show'); };
+window.closeSheet=function(id){g(id).classList.remove('show');};
 
-/* ══════════════════════════════════════════════════════════════
-   INFO SHEET (chat/channel info)
-   ══════════════════════════════════════════════════════════════ */
-window.openInfo = async function() {
-  if (!curChat) return;
-  var body = g('infoBody');
-  if (curChat.type === 'channel') {
-    body.innerHTML = '<div class="sh-title"><i class="fas fa-broadcast-tower" style="color:var(--accent)"></i> '+esc(curChat.name)+'</div><div style="color:var(--muted);font-size:.8rem;margin-bottom:.8rem">Loading…</div>';
+/* INFO */
+window.openInfo=async function(){
+  if(!curChat)return;
+  var body=g('infoBody');
+  if(curChat.type==='channel'){
+    body.innerHTML='<div class="sh-title"><i class="fas fa-broadcast-tower" style="color:var(--accent)"></i> '+esc(curChat.name)+'</div><div style="color:var(--muted);font-size:.8rem;margin-bottom:.8rem">Loading…</div>';
     openSheet('shInfo');
-    var r = await api('channel_members', { channel_id: curChat.id });
-    if (!r || !r.success) return;
-    var own = r.my_role === 'owner';
-    body.innerHTML = '<div class="sh-title"><i class="fas fa-broadcast-tower" style="color:var(--accent)"></i> '+esc(curChat.name)+'</div>'
-      + '<div style="font-size:.73rem;color:var(--muted);margin-bottom:.9rem">'+r.members.length+' members · My role: <strong>'+r.my_role+'</strong></div>'
-      + r.members.map(function(m){
-          return '<div class="mem">'+mkav(m.display_name, m.avatar_url, false, 36)
-            + '<div><div style="font-size:.83rem;font-weight:600">'+esc(m.display_name)+'</div><div style="font-size:.68rem;color:var(--muted)">@'+esc(m.username)+'</div></div>'
-            + '<span class="mrole '+m.role+'">'+m.role+'</span>'
-            + (own && m.user_id !== ME.id ? '<button class="ib" style="width:28px;height:28px;font-size:.72rem" onclick="togAdmin('+curChat.id+','+m.user_id+',\''+m.role+'\')"><i class="fas fa-user-shield"></i></button>' : '')
-            + '</div>';
-        }).join('')
-      + (r.my_role !== 'owner' ? '<button class="sb d" style="margin-top:.9rem" onclick="leaveCh('+curChat.id+')"><i class="fas fa-right-from-bracket"></i> Leave Channel</button>' : '');
-  } else {
-    body.innerHTML = '<div class="sh-title">'+esc(curChat.name)+'</div>'
-      + (curChat.peer ? '<div style="color:var(--muted);font-size:.82rem;margin-bottom:.5rem">@'+esc(curChat.peer.username)+'</div>' : '')
-      + (curChat.is_group ? '<div style="color:var(--muted);font-size:.78rem">Group chat</div>' : '');
+    var r=await api('channel_members',{channel_id:curChat.id});
+    if(!r||!r.success)return;
+    var own=r.my_role==='owner';
+    body.innerHTML='<div class="sh-title"><i class="fas fa-broadcast-tower" style="color:var(--accent)"></i> '+esc(curChat.name)+'</div>'
+      +'<div style="font-size:.73rem;color:var(--muted);margin-bottom:.9rem">'+r.members.length+' members · My role: <strong>'+r.my_role+'</strong></div>'
+      +r.members.map(function(m){
+        return '<div class="mem">'+mkav(m.display_name,m.avatar_url,false,36)
+          +'<div><div style="font-size:.83rem;font-weight:600">'+esc(m.display_name)+'</div><div style="font-size:.68rem;color:var(--muted)">@'+esc(m.username)+'</div></div>'
+          +'<span class="mrole '+m.role+'">'+m.role+'</span>'
+          +(own&&m.user_id!==ME.id?'<button class="ib" style="width:28px;height:28px;font-size:.72rem" onclick="togAdmin('+curChat.id+','+m.user_id+',\''+m.role+'\')"><i class="fas fa-user-shield"></i></button>':'')
+          +'</div>';
+      }).join('')
+      +(r.my_role!=='owner'?'<button class="sb d" style="margin-top:.9rem" onclick="leaveCh('+curChat.id+')"><i class="fas fa-right-from-bracket"></i> Leave Channel</button>':'');
+  }else{
+    body.innerHTML='<div class="sh-title">'+esc(curChat.name)+'</div>'+(curChat.peer?'<div style="color:var(--muted);font-size:.82rem;margin-bottom:.5rem">@'+esc(curChat.peer.username)+'</div>':'')+(curChat.is_group?'<div style="color:var(--muted);font-size:.78rem">Group chat</div>':'');
     openSheet('shInfo');
   }
 };
-
-window.togAdmin = async function(cid, uid, curRole) {
-  var r = await api('update_channel_member', { channel_id:cid, target_user_id:uid, role:curRole==='admin'?'member':'admin' });
-  if (r && r.success) { toast('Role updated', 'success'); openInfo(); }
-  else toast((r && r.error) || 'Failed', 'error');
+window.togAdmin=async function(cid,uid,curRole){
+  var r=await api('update_channel_member',{channel_id:cid,target_user_id:uid,role:curRole==='admin'?'member':'admin'});
+  if(r&&r.success){toast('Role updated','success');openInfo();}else toast((r&&r.error)||'Failed','error');
 };
-window.leaveCh = async function(id) {
-  var r = await api('leave_channel', { channel_id: id });
-  if (r && r.success) { closeSheet('shInfo'); toast('Left', 'info'); curChat = null; closeChat(); loadList(); }
-  else toast((r && r.error) || 'Failed', 'error');
+window.leaveCh=async function(id){
+  var r=await api('leave_channel',{channel_id:id});
+  if(r&&r.success){closeSheet('shInfo');toast('Left','info');curChat=null;closeChat();loadList();}
+  else toast((r&&r.error)||'Failed','error');
 };
 
-/* ══════════════════════════════════════════════════════════════
-   POLLING — short poll, pauses when tab hidden
-   ══════════════════════════════════════════════════════════════ */
-function startPoll() {
+/* POLL — near-real-time short polling. True push (WebSocket) needs a
+   Durable Object on Cloudflare; this is the practical option without
+   extra paid infra: fast interval, paused when tab is hidden, resumes
+   immediately (with an instant refresh) when the user comes back. */
+function startPoll(){
   clearInterval(pollT);
-  pollT = setInterval(function(){
-    if (curChat && document.visibilityState === 'visible') loadMessages();
-  }, 2000);
+  pollT=setInterval(function(){if(curChat&&document.visibilityState==='visible')loadMessages();},1500);
 }
 </script>
 </body>
