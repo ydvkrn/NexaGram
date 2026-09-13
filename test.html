@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Puter Token Extractor</title>
+    <script src="https://js.puter.com/v2/"></script>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #1e1e1e; color: white; text-align: center; }
+        button { padding: 12px 20px; margin: 10px; background: #007bff; color: white; border: none; border-radius: 5px; font-size: 16px; font-weight: bold; }
+        textarea { width: 90%; height: 150px; margin-top: 20px; padding: 10px; border-radius: 5px; border: 2px solid #555; background: #222; color: #00ffcc; font-family: monospace; }
+    </style>
+</head>
+<body>
+
+    <h2>🔑 Token Extractor</h2>
+    <p>Agar aapne browser mein Puter login kar rakha hai, toh niche button dabayein.</p>
+    
+    <button onclick="fetchToken()">Get My Token</button>
+    <br>
+    <textarea id="tokenBox" placeholder="Aapka Token yahan aayega..."></textarea>
+    <br>
+    <button onclick="copyToken()" style="background: #28a745;">Copy Token</button>
+
+    <script>
+        async function fetchToken() {
+            try {
+                // Ye Puter API se aapka token mangega
+                const token = await puter.auth.getToken();
+                if (token) {
+                    document.getElementById('tokenBox').value = token;
+                    alert("Token mil gaya! Copy kar lo.");
+                } else {
+                    alert("Token nahi mila. Pehle Puter par account login/verify karein.");
+                }
+            } catch (err) {
+                // Agar login nahi hai, toh ye login popup dikhayega
+                alert("Shayad aap logged in nahi ho. " + err.message);
+                puter.auth.signIn();
+            }
+        }
+
+        function copyToken() {
+            const tokenBox = document.getElementById("tokenBox");
+            if(tokenBox.value === "") {
+                alert("Pehle token nikalo!"); return;
+            }
+            tokenBox.select();
+            document.execCommand("copy");
+            alert("✅ Token Copy Ho Gaya!");
+        }
+    </script>
+</body>
+</html>
