@@ -1,52 +1,77 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Puter Token Extractor</title>
+    <meta charset="UTF-8">
+    <title>AI Image Generator (Puter + Marya Hosting)</title>
     <script src="https://js.puter.com/v2/"></script>
     <style>
-        body { font-family: Arial, sans-serif; padding: 20px; background: #1e1e1e; color: white; text-align: center; }
-        button { padding: 12px 20px; margin: 10px; background: #007bff; color: white; border: none; border-radius: 5px; font-size: 16px; font-weight: bold; }
-        textarea { width: 90%; height: 150px; margin-top: 20px; padding: 10px; border-radius: 5px; border: 2px solid #555; background: #222; color: #00ffcc; font-family: monospace; }
+        body { font-family: Arial, sans-serif; padding: 20px; background: #1e1e1e; color: white; }
+        input { padding: 10px; width: 300px; border-radius: 5px; border: none; }
+        button { padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        #status { color: #ffeb3b; margin-top: 15px; }
+        #result a { color: #00e5ff; }
     </style>
 </head>
 <body>
 
-    <h2>🔑 Token Extractor</h2>
-    <p>Agar aapne browser mein Puter login kar rakha hai, toh niche button dabayein.</p>
+    <h2>AI Generator & Direct Uploader</h2>
+    <p>Model: FLUX.2 Pro (Puter AI)</p>
     
-    <button onclick="fetchToken()">Get My Token</button>
-    <br>
-    <textarea id="tokenBox" placeholder="Aapka Token yahan aayega..."></textarea>
-    <br>
-    <button onclick="copyToken()" style="background: #28a745;">Copy Token</button>
+    <input type="text" id="promptBox" placeholder="Enter prompt (e.g. futuristic city in rain)">
+    <button onclick="generateAndUpload()">Generate & Upload</button>
+
+    <div id="status"></div>
+    <div id="result" style="margin-top: 20px;"></div>
 
     <script>
-        async function fetchToken() {
-            try {
-                // Ye Puter API se aapka token mangega
-                const token = await puter.auth.getToken();
-                if (token) {
-                    document.getElementById('tokenBox').value = token;
-                    alert("Token mil gaya! Copy kar lo.");
-                } else {
-                    alert("Token nahi mila. Pehle Puter par account login/verify karein.");
-                }
-            } catch (err) {
-                // Agar login nahi hai, toh ye login popup dikhayega
-                alert("Shayad aap logged in nahi ho. " + err.message);
-                puter.auth.signIn();
+        async function generateAndUpload() {
+            const prompt = document.getElementById('promptBox').value;
+            const status = document.getElementById('status');
+            const result = document.getElementById('result');
+            
+            if(!prompt) {
+                alert("Please enter a prompt!");
+                return;
             }
-        }
 
-        function copyToken() {
-            const tokenBox = document.getElementById("tokenBox");
-            if(tokenBox.value === "") {
-                alert("Pehle token nikalo!"); return;
+            status.innerHTML = "1. AI Image Generate kar raha hai (FLUX.2 Pro)... Please wait ⏳";
+            result.innerHTML = "";
+
+            try {
+                // 1. Puter AI se High-Quality Image Generate karna
+                const imgElement = await puter.ai.txt2img(prompt, { model: "black-forest-labs/flux-2-pro" });
+                
+                status.innerHTML = "2. Image ban gayi! Ab Marya Hosting par Upload ho rahi hai... 🚀";
+                
+                // Puter jo image deta hai usko file/blob me convert karna
+                const imageResponse = await fetch(imgElement.src);
+                const imageBlob = await imageResponse.blob();
+
+                // 2. Marya Hosting par Upload karna
+                const formData = new FormData();
+                formData.append("file", imageBlob, `puter_ai_${Date.now()}.jpg`);
+
+                const uploadRes = await fetch("https://marya-hosting.pages.dev/upload", {
+                    method: "POST",
+                    body: formData
+                });
+
+                const uploadData = await uploadRes.json();
+                
+                // Direct stream URL nikalna
+                const finalLink = uploadData?.urls?.stream || uploadData.url;
+
+                // 3. Final URL aur Image Dikhana
+                status.innerHTML = "✅ Success! Ye raha aapka Direct Link:";
+                result.innerHTML = `
+                    <p><b>Link:</b> <a href="${finalLink}" target="_blank">${finalLink}</a></p>
+                    <img src="${finalLink}" style="max-width: 500px; border-radius: 10px; border: 2px solid #555;">
+                `;
+
+            } catch (err) {
+                status.innerHTML = "❌ Error: " + err.message;
             }
-            tokenBox.select();
-            document.execCommand("copy");
-            alert("✅ Token Copy Ho Gaya!");
         }
     </script>
 </body>
