@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Ultra-Fast CDN Stream Player</title>
+  
+  <!-- HLS.js for ExoPlayer-like Adaptive Bitrate & Buffer Control -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+  
+  <!-- Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+
+  <style>
+    :root {
+      --bg-dark: #09090b;
+      --glass-bg: rgba(18, 18, 22, 0.78);
+      --glass-border: rgba(255, 255, 255, 0.12);
+      --accent: #ef4444;
+      --accent-glow: rgba(239, 68, 68, 0.45);
+      --text-main: #f4f4f5;
+      --text-muted: #a1a1aa;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Player Wrapper */
+    .player-container {
+      position: relative;
+      width: 100%;
+      max-width: 1100px;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85), 0 0 0 1px var(--glass-border);
+    }
+
+    @media (max-width: 768px) {
+      .player-container {
+        border-radius: 0;
+        max-width: 100%;
+        height: 100vh;
+        aspect-ratio: auto;
+      }
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+
+    /* Double Tap Zones */
+    .tap-zone {
+      position: absolute;
+      top: 0;
+      bottom: 70px;
+      width: 35%;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .tap-left { left: 0; }
+    .tap-right { right: 0; }
+
+    .seek-badge {
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(8px);
+      padding: 12px 18px;
+      border-radius: 50px;
+      font-size: 14px;
+      font-weight: 600;
+      opacity: 0;
+      transform: scale(0.8);
+      transition: all 0.2s ease;
+      pointer-events: none;
+      border: 1px solid var(--glass-border);
+    }
+    .seek-badge.active {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    /* Center Play/Loader */
+    .center-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 15;
+    }
+
+    .spinner {
+      width: 52px;
+      height: 52px;
+      border: 4px solid rgba(255, 255, 255, 0.15);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+      display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .big-play-btn {
+      width: 68px;
+      height: 68px;
+      border-radius: 50%;
+      background: var(--glass-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--glass-border);
+      color: #fff;
+      font-size: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      pointer-events: auto;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .big-play-btn:hover {
+      transform: scale(1.08);
+      background: var(--accent);
+    }
+
+    /* Top Bar (Stats & Cache Status) */
+    .top-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 14px 20px;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.85), transparent);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 20;
+      transition: opacity 0.3s ease;
+    }
+
+    .badge-pill {
+      background: var(--glass-bg);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--glass-border);
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-muted);
+    }
+    .dot-live {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 8px #22c55e;
+    }
+
+    /* Bottom Controls */
+    .controls-wrapper {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 28px 18px 14px;
+      background: linear-gradient(to top, rgba(0,0,0,0.92) 10%, transparent);
+      z-index: 25;
+      transition: opacity 0.3s ease;
+    }
+
+    .player-container.hide-ui .top-bar,
+    .player-container.hide-ui .controls-wrapper {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* Progress Bar */
+    .progress-area {
+      position: relative;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      margin-bottom: 8px;
+    }
+
+    .progress-track {
+      position: relative;
+      width: 100%;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      transition: height 0.15s ease;
+    }
+    .progress-area:hover .progress-track {
+      height: 6px;
+    }
+
+    .buffer-bar {
+      position: absolute;
+      height: 100%;
+      background: rgba(255, 255, 255, 0.4);
+      border-radius: 4px;
+      width: 0%;
+    }
+
+    .played-bar {
+      position: absolute;
+      height: 100%;
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent-glow);
+      border-radius: 4px;
+      width: 0%;
+    }
+
+    .played-thumb {
+      position: absolute;
+      right: -6px;
+      top: 50%;
+      transform: translateY(-50%) scale(0);
+      width: 13px;
+      height: 13px;
+      background: #fff;
+      border: 2px solid var(--accent);
+      border-radius: 50%;
+      transition: transform 0.15s ease;
+    }
+    .progress-area:hover .played-thumb {
+      transform: translateY(-50%) scale(1);
+    }
+
+    .time-tooltip {
+      position: absolute;
+      bottom: 22px;
+      transform: translateX(-50%);
+      background: var(--glass-bg);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--glass-border);
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      display: none;
+      pointer-events: none;
+    }
+
+    /* Bottom Buttons Row */
+    .controls-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .ctrl-group {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .ctrl-btn {
+      background: none;
+      border: none;
+      color: var(--text-main);
+      font-size: 16px;
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 8px;
+      transition: color 0.2s, background 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .ctrl-btn:hover {
+      color: var(--accent);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .time-display {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .volume-box {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .volume-slider {
+      width: 70px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    /* Settings Popover Menu */
+    .settings-menu {
+      position: absolute;
+      bottom: 65px;
+      right: 18px;
+      width: 230px;
+      background: var(--glass-bg);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      padding: 10px;
+      z-index: 30;
+      display: none;
+      box-shadow: 0 15px 35px rgba(0,0,0,0.7);
+    }
+    .settings-menu.open { display: block; }
+
+    .menu-section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-muted);
+      padding: 6px 8px;
+    }
+
+    .menu-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5px;
+      margin-bottom: 10px;
+    }
+
+    .chip-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid transparent;
+      color: var(--text-main);
+      padding: 6px 4px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .chip-btn.active {
+      border-color: var(--accent);
+      background: rgba(239, 68, 68, 0.2);
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .quality-list {
+      max-height: 150px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .quality-item {
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+    }
+    .quality-item:hover { background: rgba(255,255,255,0.08); }
+    .quality-item.active { color: var(--accent); font-weight: 600; }
+
+    /* Stats Overlay */
+    .stats-box {
+      position: absolute;
+      top: 52px;
+      left: 20px;
+      background: var(--glass-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--glass-border);
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-family: monospace;
+      color: #d4d4d8;
+      z-index: 22;
+      display: none;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+
+<div class="player-container" id="playerContainer">
+  <video id="video" playsinline preload="auto" crossorigin="anonymous"></video>
+
+  <!-- Double Tap Seek Zones -->
+  <div class="tap-zone tap-left" id="tapLeft">
+    <div class="seek-badge" id="badgeLeft"><i class="fa-solid fa-backward"></i> -10s</div>
+  </div>
+  <div class="tap-zone tap-right" id="tapRight">
+    <div class="seek-badge" id="badgeRight">+10s <i class="fa-solid fa-forward"></i></div>
+  </div>
+
+  <!-- Center Loader & Big Play -->
+  <div class="center-overlay">
+    <div class="spinner" id="loader"></div>
+    <button class="big-play-btn" id="bigPlayBtn"><i class="fa-solid fa-play"></i></button>
+  </div>
+
+  <!-- Top Bar -->
+  <div class="top-bar">
+    <div class="badge-pill">
+      <span class="dot-live"></span>
+      <span id="cdnStatus">CDN Fast-Buffer Active</span>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="badge-pill" id="toggleStatsBtn" style="cursor:pointer;">
+        <i class="fa-solid fa-gauge-high"></i> Stats
+      </button>
+    </div>
+  </div>
+
+  <!-- Nerd Stats Panel -->
+  <div class="stats-box" id="statsBox">
+    <div>Buffer Ahead: <span id="statBuffer">0.0s</span></div>
+    <div>Cache Hits: <span id="statCache">0</span></div>
+    <div>Resolution: <span id="statRes">Auto</span></div>
+    <div>Bandwidth: <span id="statBw">0 Mbps</span></div>
+  </div>
+
+  <!-- Settings Popover -->
+  <div class="settings-menu" id="settingsMenu">
+    <div class="menu-section-title">Playback Speed</div>
+    <div class="menu-grid" id="speedGrid">
+      <button class="chip-btn" data-speed="0.75">0.75x</button>
+      <button class="chip-btn active" data-speed="1">1.0x</button>
+      <button class="chip-btn" data-speed="1.25">1.25x</button>
+      <button class="chip-btn" data-speed="1.5">1.5x</button>
+      <button class="chip-btn" data-speed="2">2.0x</button>
+      <button class="chip-btn" data-speed="2.5">2.5x</button>
+    </div>
+
+    <div class="menu-section-title">Video Quality</div>
+    <div class="quality-list" id="qualityList">
+      <div class="quality-item active" data-level="-1">Auto (Best) <i class="fa-solid fa-check"></i></div>
+    </div>
+  </div>
+
+  <!-- Bottom Controls -->
+  <div class="controls-wrapper">
+    <div class="progress-area" id="progressArea">
+      <div class="time-tooltip" id="timeTooltip">00:00</div>
+      <div class="progress-track">
+        <div class="buffer-bar" id="bufferBar"></div>
+        <div class="played-bar" id="playedBar">
+          <div class="played-thumb"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls-row">
+      <div class="ctrl-group">
+        <button class="ctrl-btn" id="playPauseBtn" title="Play/Pause (Space)"><i class="fa-solid fa-play"></i></button>
+        <button class="ctrl-btn" id="rewindBtn" title="Rewind 10s"><i class="fa-solid fa-rotate-left"></i></button>
+        <button class="ctrl-btn" id="forwardBtn" title="Forward 10s"><i class="fa-solid fa-rotate-right"></i></button>
+
+        <div class="volume-box">
+          <button class="ctrl-btn" id="muteBtn" title="Mute (M)"><i class="fa-solid fa-volume-high"></i></button>
+          <input type="range" class="volume-slider" id="volumeSlider" min="0" max="1" step="0.05" value="1" />
+        </div>
+
+        <div class="time-display">
+          <span id="currentTime">00:00</span> / <span id="duration">00:00</span>
+        </div>
+      </div>
+
+      <div class="ctrl-group">
+        <button class="ctrl-btn" id="pipBtn" title="Picture in Picture"><i class="fa-solid fa-clone"></i></button>
+        <button class="ctrl-btn" id="settingsBtn" title="Quality & Speed"><i class="fa-solid fa-gear"></i></button>
+        <button class="ctrl-btn" id="fullscreenBtn" title="Fullscreen (F)"><i class="fa-solid fa-expand"></i></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ==========================================
+  // 1. STREAM URL CONFIGURATION
+  // ==========================================
+  const STREAM_API_URL = "https://pw.studyparcham.in/api/stream?batchId=698ec4d979fb4aa23c1fd2c3&videoId=6afbfdfb154ad94db7655d65";
+
+  const video = document.getElementById('video');
+  const container = document.getElementById('playerContainer');
+  const loader = document.getElementById('loader');
+  const bigPlayBtn = document.getElementById('bigPlayBtn');
+  const playPauseBtn = document.getElementById('playPauseBtn');
+  const progressArea = document.getElementById('progressArea');
+  const playedBar = document.getElementById('playedBar');
+  const bufferBar = document.getElementById('bufferBar');
+  const timeTooltip = document.getElementById('timeTooltip');
+  const currentTimeEl = document.getElementById('currentTime');
+  const durationEl = document.getElementById('duration');
+  const settingsBtn = document.getElementById('settingsBtn');
+  const settingsMenu = document.getElementById('settingsMenu');
+  const qualityList = document.getElementById('qualityList');
+  const statsBox = document.getElementById('statsBox');
+
+  let hls = null;
+  let cacheHits = 0;
+  const memorySegmentCache = new Map(); // Ultra-fast RAM LRU Cache for segments
+
+  // ==========================================
+  // 2. CUSTOM IN-MEMORY + CACHE API LOADER
+  // (ExoPlayer-style Segment Pre-caching)
+  // ==========================================
+  class FastCacheLoader extends Hls.DefaultConfig.loader {
+    constructor(config) {
+      super(config);
+      const loadOrig = this.load.bind(this);
+
+      this.load = async (context, config, callbacks) => {
+        const url = context.url;
+        const isSegment = url.includes('.ts') || url.includes('.m4s') || url.includes('.aac');
+
+        if (isSegment) {
+          // 1. Check Ultra-fast RAM Cache first
+          if (memorySegmentCache.has(url)) {
+            cacheHits++;
+            document.getElementById('statCache').textContent = cacheHits;
+            const cachedData = memorySegmentCache.get(url);
+            callbacks.onSuccess({ url, data: cachedData }, { trequest: performance.now(), tfirst: performance.now(), tload: performance.now() }, context);
+            return;
+          }
+
+          // 2. Check Browser Cache Storage (Persistent across reloads)
+          if ('caches' in window) {
+            try {
+              const cache = await caches.open('cdn-video-segments-v1');
+              const cachedRes = await cache.match(url);
+              if (cachedRes) {
+                const buf = await cachedRes.arrayBuffer();
+                memorySegmentCache.set(url, buf);
+                cacheHits++;
+                document.getElementById('statCache').textContent = cacheHits;
+                callbacks.onSuccess({ url, data: buf }, { trequest: performance.now(), tfirst: performance.now(), tload: performance.now() }, context);
+                return;
+              }
+            } catch (e) {}
+          }
+
+          // Intercept onSuccess to store in RAM + Cache API
+          const origOnSuccess = callbacks.onSuccess;
+          callbacks.onSuccess = async (response, stats, ctx, networkDetails) => {
+            if (response && response.data) {
+              // Keep max 40 segments (~150MB) in RAM for instant backward/forward seek
+              if (memorySegmentCache.size > 40) {
+                const firstKey = memorySegmentCache.keys().next().value;
+                memorySegmentCache.delete(firstKey);
+              }
+              memorySegmentCache.set(url, response.data);
+
+              if ('caches' in window) {
+                caches.open('cdn-video-segments-v1').then(cache => {
+                  cache.put(url, new Response(response.data)).catch(() => {});
+                });
+              }
+            }
+            origOnSuccess(response, stats, ctx, networkDetails);
+          };
+        }
+
+        loadOrig(context, config, callbacks);
+      };
+    }
+  }
+
+  // ==========================================
+  // 3. INITIALIZE STREAM (AUTO-DETECT JSON OR M3U8)
+  // ==========================================
+  async function initStream() {
+    loader.style.display = 'block';
+    bigPlayBtn.style.display = 'none';
+
+    try {
+      // Check if API returns JSON containing the CloudFront URL or direct m3u8/mp4
+      const res = await fetch(STREAM_API_URL);
+      const contentType = res.headers.get('content-type') || '';
+
+      let finalStreamUrl = STREAM_API_URL;
+
+      if (contentType.includes('application/json')) {
+        const json = await res.json();
+        // Common JSON keys used by stream APIs
+        finalStreamUrl = json.url || json.streamUrl || json.data?.url || json.data?.streamUrl || STREAM_API_URL;
+      }
+
+      loadVideoSource(finalStreamUrl);
+    } catch (err) {
+      // Fallback directly to URL if fetch fails due to CORS preflight
+      loadVideoSource(STREAM_API_URL);
+    }
+  }
+
+  function loadVideoSource(src) {
+    if (Hls.isSupported() && !src.endsWith('.mp4')) {
+      hls = new Hls({
+        loader: FastCacheLoader,
+        // ExoPlayer-like Aggressive Pre-buffering Config
+        maxBufferLength: 60,            // Preload 60 seconds ahead
+        maxMaxBufferLength: 180,        // Allow up to 3 mins buffer on fast Wi-Fi
+        maxBufferSize: 120 * 1000 * 1000, // 120MB buffer limit
+        enableWorker: true,             // Offload demuxing to Web Worker (Zero UI lag)
+        lowLatencyMode: false,
+        backBufferLength: 60,           // Keep 60s behind for instant rewind
+        startFragPrefetch: true,        // Prefetch next fragment immediately
+        fragLoadingTimeOut: 20000,
+        manifestLoadingMaxRetry: 4,
+        levelLoadingMaxRetry: 4,
+        abrEwmaDefaultEstimate: 5000000 // Start assuming fast 5Mbps connection for crisp initial quality
+      });
+
+      hls.loadSource(src);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+        loader.style.display = 'none';
+        bigPlayBtn.style.display = 'flex';
+        buildQualityMenu(data.levels);
+        restoreLastPosition();
+      });
+
+      hls.on(Hls.Events.FRAG_LOADED, (event, data) => {
+        const bwMbps = ((data.frag.stats.total * 8) / ((data.frag.stats.loading.end - data.frag.stats.loading.start) / 1000) / 1e6).toFixed(2);
+        if (!isNaN(bwMbps) && isFinite(bwMbps)) {
+          document.getElementById('statBw').textContent = `${bwMbps} Mbps`;
+        }
+      });
+
+      hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+        const level = hls.levels[data.level];
+        if (level) {
+          document.getElementById('statRes').textContent = `${level.height}p`;
+        }
+      });
+
+      hls.on(Hls.Events.ERROR, (event, data) => {
+        if (data.fatal) {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hls.startLoad();
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls.recoverMediaError();
+          } else {
+            // Fallback to native HTML5 video (for direct MP4 / CloudFront signed MP4)
+            hls.destroy();
+            video.src = src;
+          }
+        }
+      });
+    } else {
+      // Native Safari HLS or Direct MP4
+      video.src = src;
+      video.addEventListener('loadedmetadata', () => {
+        loader.style.display = 'none';
+        bigPlayBtn.style.display = 'flex';
+        restoreLastPosition();
+      });
+    }
+  }
+
+  // ==========================================
+  // 4. QUALITY SWITCHER
+  // ==========================================
+  function buildQualityMenu(levels) {
+    qualityList.innerHTML = `<div class="quality-item active" data-level="-1">Auto (Fastest) <i class="fa-solid fa-check"></i></div>`;
+    levels.forEach((lvl, idx) => {
+      const label = lvl.height ? `${lvl.height}p` : `Track ${idx + 1}`;
+      const div = document.createElement('div');
+      div.className = 'quality-item';
+      div.dataset.level = idx;
+      div.innerHTML = `<span>${label}</span>`;
+      qualityList.appendChild(div);
+    });
+
+    qualityList.querySelectorAll('.quality-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const lvl = parseInt(item.dataset.level);
+        if (hls) hls.currentLevel = lvl;
+        qualityList.querySelectorAll('.quality-item').forEach(el => {
+          el.classList.remove('active');
+          el.querySelector('i')?.remove();
+        });
+        item.classList.add('active');
+        item.innerHTML += ` <i class="fa-solid fa-check"></i>`;
+        settingsMenu.classList.remove('open');
+      });
+    });
+  }
+
+  // ==========================================
+  // 5. PLAYBACK, SEEK & BUFFER CONTROLS
+  // ==========================================
+  function togglePlay() {
+    if (video.paused) {
+      video.play();
+    } else {
+      video.pause();
+    }
+  }
+
+  video.addEventListener('play', () => {
+    playPauseBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
+    bigPlayBtn.style.display = 'none';
+  });
+
+  video.addEventListener('pause', () => {
+    playPauseBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
+    bigPlayBtn.style.display = 'flex';
+  });
+
+  video.addEventListener('waiting', () => loader.style.display = 'block');
+  video.addEventListener('playing', () => loader.style.display = 'none');
+
+  playPauseBtn.addEventListener('click', togglePlay);
+  bigPlayBtn.addEventListener('click', togglePlay);
+  video.addEventListener('click', togglePlay);
+
+  document.getElementById('rewindBtn').addEventListener('click', () => video.currentTime -= 10);
+  document.getElementById('forwardBtn').addEventListener('click', () => video.currentTime += 10);
+
+  // Double Tap Mobile/Desktop
+  function triggerDoubleTap(side, delta) {
+    video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + delta));
+    const badge = document.getElementById(side === 'left' ? 'badgeLeft' : 'badgeRight');
+    badge.classList.add('active');
+    setTimeout(() => badge.classList.remove('active'), 500);
+  }
+  document.getElementById('tapLeft').addEventListener('dblclick', () => triggerDoubleTap('left', -10));
+  document.getElementById('tapRight').addEventListener('dblclick', () => triggerDoubleTap('right', 10));
+
+  // Progress & Buffer Updates
+  video.addEventListener('timeupdate', () => {
+    if (!video.duration) return;
+    const pct = (video.currentTime / video.duration) * 100;
+    playedBar.style.width = `${pct}%`;
+    currentTimeEl.textContent = formatTime(video.currentTime);
+    localStorage.setItem('resume_' + STREAM_API_URL, video.currentTime);
+
+    // Update Buffer Bar & Nerd Stats
+    if (video.buffered.length > 0) {
+      for (let i = 0; i < video.buffered.length; i++) {
+        if (video.buffered.start(i) <= video.currentTime && video.currentTime <= video.buffered.end(i)) {
+          const bufEnd = video.buffered.end(i);
+          bufferBar.style.width = `${(bufEnd / video.duration) * 100}%`;
+          document.getElementById('statBuffer').textContent = `${(bufEnd - video.currentTime).toFixed(1)}s`;
+          break;
+        }
+      }
+    }
+  });
+
+  video.addEventListener('loadedmetadata', () => {
+    durationEl.textContent = formatTime(video.duration);
+  });
+
+  function restoreLastPosition() {
+    const saved = parseFloat(localStorage.getItem('resume_' + STREAM_API_URL));
+    if (saved && saved > 5 && saved < video.duration - 10) {
+      video.currentTime = saved;
+    }
+  }
+
+  // Seek Scrubbing + Hover Tooltip
+  progressArea.addEventListener('mousemove', (e) => {
+    const rect = progressArea.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    timeTooltip.style.display = 'block';
+    timeTooltip.style.left = `${pos * 100}%`;
+    timeTooltip.textContent = formatTime(pos * (video.duration || 0));
+  });
+
+  progressArea.addEventListener('mouseleave', () => timeTooltip.style.display = 'none');
+
+  progressArea.addEventListener('click', (e) => {
+    const rect = progressArea.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    video.currentTime = pos * video.duration;
+  });
+
+  // ==========================================
+  // 6. SPEED, VOLUME, PIP, FULLSCREEN & SHORTCUTS
+  // ==========================================
+  document.querySelectorAll('#speedGrid .chip-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      video.playbackRate = parseFloat(btn.dataset.speed);
+      document.querySelectorAll('#speedGrid .chip-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+
+  const volumeSlider = document.getElementById('volumeSlider');
+  const muteBtn = document.getElementById('muteBtn');
+  volumeSlider.addEventListener('input', (e) => {
+    video.volume = e.target.value;
+    video.muted = video.volume === 0;
+    muteBtn.innerHTML = video.muted ? '<i class="fa-solid fa-volume-xmark"></i>' : '<i class="fa-solid fa-volume-high"></i>';
+  });
+
+  muteBtn.addEventListener('click', () => {
+    video.muted = !video.muted;
+    muteBtn.innerHTML = video.muted ? '<i class="fa-solid fa-volume-xmark"></i>' : '<i class="fa-solid fa-volume-high"></i>';
+  });
+
+  settingsBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    settingsMenu.classList.toggle('open');
+  });
+  document.addEventListener('click', (e) => {
+    if (!settingsMenu.contains(e.target) && e.target !== settingsBtn) {
+      settingsMenu.classList.remove('open');
+    }
+  });
+
+  document.getElementById('toggleStatsBtn').addEventListener('click', () => {
+    statsBox.style.display = statsBox.style.display === 'block' ? 'none' : 'block';
+  });
+
+  document.getElementById('pipBtn').addEventListener('click', async () => {
+    if (document.pictureInPictureElement) {
+      await document.exitPictureInPicture();
+    } else if (document.pictureInPictureEnabled) {
+      await video.requestPictureInPicture();
+    }
+  });
+
+  document.getElementById('fullscreenBtn').addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+      container.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen();
+    }
+  });
+
+  // Auto-hide controls on idle
+  let hideTimeout;
+  function resetIdleTimer() {
+    container.classList.remove('hide-ui');
+    clearTimeout(hideTimeout);
+    if (!video.paused) {
+      hideTimeout = setTimeout(() => container.classList.add('hide-ui'), 3000);
+    }
+  }
+  container.addEventListener('mousemove', resetIdleTimer);
+  container.addEventListener('touchstart', resetIdleTimer);
+
+  // Keyboard Shortcuts
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+    if (e.code === 'ArrowRight') video.currentTime += 10;
+    if (e.code === 'ArrowLeft') video.currentTime -= 10;
+    if (e.code === 'KeyF') document.getElementById('fullscreenBtn').click();
+    if (e.code === 'KeyM') muteBtn.click();
+  });
+
+  function formatTime(sec) {
+    if (isNaN(sec)) return "00:00";
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = Math.floor(sec % 60);
+    return h > 0
+      ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+      : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+
+  // Start
+  initStream();
+</script>
+</body>
+</html>
